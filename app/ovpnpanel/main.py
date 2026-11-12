@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import sqlite3
@@ -139,10 +140,41 @@ def overview(_=Depends(current_admin)):
             "endpoint": f"{s['endpoint_host']}:{s['public_port']}"}
 
 
+def _journal_log(lines: int):
+    """Log di OpenVPN dal journal (storia completa, a differenza del buffer del management)."""
+    try:
+        r = subprocess.run(
+            # margine ampio: le righe MANAGEMENT vengono scartate dopo la lettura
+            ["journalctl", "-u", "openvpn-server@server", "-n", str(min(lines * 20, 20000)),
+             "-o", "json", "--no-pager"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    out = []
+    for raw in r.stdout.splitlines():
+        try:
+            e = json.loads(raw)
+        except ValueError:
+            continue
+        msg = e.get("MESSAGE")
+        if isinstance(msg, str) and not msg.startswith("MANAGEMENT:"):
+            out.append({"time": int(e["__REALTIME_TIMESTAMP"]) // 1_000_000,
+                        "flags": "N" if int(e.get("PRIORITY", 6)) <= 4 else "I", "msg": msg})
+    return out[-lines:]
+
+
 @app.get("/api/server/log")
 def server_log(lines: int = 150, _=Depends(current_admin)):
+    lines = min(max(lines, 1), 1000)
+    entries = _journal_log(lines)
+    if entries is not None:
+        return entries
     try:
-        return mgmt.log(min(max(lines, 1), 1000))
+        # senza journald (es. installazione fuori da systemd): buffer del management
+        return [e for e in mgmt.log(lines) if not e["msg"].startswith("MANAGEMENT:")]
     except mgmt.MgmtError as e:
         raise HTTPException(503, str(e))
 

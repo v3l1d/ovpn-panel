@@ -1,7 +1,8 @@
 """Client per l'interfaccia di management di OpenVPN (socket unix).
 
-OpenVPN accetta un solo client di management alla volta: ogni comando apre
-una connessione, la usa e la chiude, serializzato da un lock.
+OpenVPN accetta un solo client di management alla volta e scrive nel log ogni
+connessione e disconnessione: si tiene quindi aperta una sola connessione,
+condivisa sotto lock e riaperta quando OpenVPN si riavvia.
 """
 import socket
 import threading
@@ -10,39 +11,67 @@ from .config import CONFIG
 
 TIMEOUT = 3
 _lock = threading.Lock()
+_conn = None  # (socket, file in lettura)
 
 
 class MgmtError(Exception):
     pass
 
 
+def _close():
+    global _conn
+    if _conn:
+        for part in reversed(_conn):
+            try:
+                part.close()
+            except OSError:
+                pass
+    _conn = None
+
+
+def _open():
+    global _conn
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(TIMEOUT)
+    s.connect(CONFIG.mgmt_socket)
+    _conn = (s, s.makefile("r", encoding="utf-8", errors="replace", newline="\n"))
+
+
+def _exchange(cmd: str, multiline: bool) -> list:
+    s, rf = _conn
+    s.sendall((cmd + "\n").encode())
+    out = []
+    while True:
+        line = rf.readline()
+        if not line:
+            raise ConnectionResetError("connessione chiusa da OpenVPN")
+        line = line.rstrip("\r\n")
+        if line.startswith(">"):  # benvenuto e notifiche asincrone
+            continue
+        if line.startswith("ERROR:"):
+            raise MgmtError(line[6:].strip())
+        if multiline:
+            if line == "END":
+                return out
+            out.append(line)
+        elif line.startswith("SUCCESS:"):
+            return [line[8:].strip()]
+
+
 def _command(cmd: str, multiline: bool) -> list:
     with _lock:
-        try:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(TIMEOUT)
-            s.connect(CONFIG.mgmt_socket)
-        except OSError as e:
-            raise MgmtError(f"OpenVPN non raggiungibile ({e})")
-        try:
-            with s, s.makefile("r", encoding="utf-8", errors="replace", newline="\n") as rf:
-                s.sendall((cmd + "\n").encode())
-                out = []
-                for line in rf:
-                    line = line.rstrip("\r\n")
-                    if line.startswith(">"):  # benvenuto e notifiche asincrone
-                        continue
-                    if line.startswith("ERROR:"):
-                        raise MgmtError(line[6:].strip())
-                    if multiline:
-                        if line == "END":
-                            return out
-                        out.append(line)
-                    elif line.startswith("SUCCESS:"):
-                        return [line[8:].strip()]
-        except OSError as e:
-            raise MgmtError(f"Errore di comunicazione con OpenVPN ({e})")
-        raise MgmtError("OpenVPN ha chiuso la connessione")
+        # un secondo tentativo con una connessione nuova copre il riavvio di OpenVPN
+        for attempt in (1, 2):
+            try:
+                if _conn is None:
+                    _open()
+                return _exchange(cmd, multiline)
+            except MgmtError:
+                raise
+            except OSError as e:
+                _close()
+                if attempt == 2:
+                    raise MgmtError(f"OpenVPN non raggiungibile ({e})")
 
 
 def clients() -> dict:
