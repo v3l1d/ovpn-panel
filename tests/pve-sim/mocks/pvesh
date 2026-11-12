@@ -1,0 +1,6 @@
+#!/bin/bash
+echo "pvesh $*" >> /var/log/pve-sim.log
+[[ "$*" == "get /cluster/nextid" ]] || exit 2
+id=100
+while [[ -e /etc/pve/lxc/$id.conf ]]; do id=$((id + 1)); done
+echo "$id"
