@@ -11,7 +11,8 @@ case "$cmd" in
   exec)
     shift  # id
     [[ $1 == -- ]] && shift
-    exec "$@" ;;
+    # come il pct vero: ambiente ripulito e PATH senza /usr/local (bug trovato sul primo Proxmox reale)
+    exec env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root TERM="${TERM:-dumb}" "$@" ;;
   push)
     cp "$2" "$3" ;;
   *) echo "pct simulato: comando non gestito $cmd" >&2; exit 2 ;;

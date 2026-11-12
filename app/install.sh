@@ -4,6 +4,8 @@
 #   PUBLIC_HOST=casa.ddns.net bash install.sh
 # Rilanciarlo aggiorna l'applicazione senza toccare PKI, utenti e impostazioni.
 set -euo pipefail
+# "pct exec" non passa un PATH completo: senza /usr/local/bin il comando ovpn-panel non si trova
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 PUBLIC_HOST="${PUBLIC_HOST:-}"
 OVPN_PORT="${OVPN_PORT:-1194}"
@@ -81,7 +83,7 @@ cat > /usr/local/bin/ovpn-panel <<EOF
 cd $APP_DIR && exec $APP_DIR/venv/bin/python -m ovpnpanel.manage "\$@"
 EOF
 chmod 755 /usr/local/bin/ovpn-panel
-ovpn-panel init
+/usr/local/bin/ovpn-panel init
 
 step "Certificato TLS del pannello"
 if [[ ! -f $CONF_DIR/tls.crt ]]; then
@@ -150,7 +152,7 @@ done
 step "Amministratore"
 if [[ ! -f $CREDS ]]; then
   ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16)}"
-  OVPN_PANEL_PASSWORD="$ADMIN_PASSWORD" ovpn-panel create-admin "$ADMIN_USER"
+  OVPN_PANEL_PASSWORD="$ADMIN_PASSWORD" /usr/local/bin/ovpn-panel create-admin "$ADMIN_USER"
   (umask 077; cat > "$CREDS" <<EOF
 url=https://$LAN_IP:$PANEL_PORT/
 username=$ADMIN_USER
