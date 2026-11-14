@@ -1,6 +1,6 @@
-# "Nodo Proxmox" finto per provare dist/ovpn-panel-proxmox.sh senza un Proxmox vero.
-# Debian 12 con systemd, come il container LXC creato dallo script; pct/pveam/pvesh/pvesm
-# sono simulati e "pct exec" esegue i comandi qui dentro, quindi install.sh gira davvero.
+# Fake "Proxmox node" to test dist/ovpn-panel-proxmox.sh without a real Proxmox.
+# Debian 12 with systemd, like the LXC container the script creates; pct/pveam/pvesh/pvesm
+# are simulated and "pct exec" runs commands right here, so install.sh really runs.
 FROM debian:12
 
 RUN apt-get update \

@@ -38,7 +38,7 @@ def token_hash(token: str) -> str:
 
 
 class LoginThrottle:
-    """Blocca un IP dopo `limit` tentativi falliti in `window` secondi."""
+    """Blocks an IP after `limit` failed attempts within `window` seconds."""
 
     def __init__(self, limit=5, window=600):
         self.limit, self.window = limit, window

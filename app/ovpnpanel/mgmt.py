@@ -1,8 +1,8 @@
-"""Client per l'interfaccia di management di OpenVPN (socket unix).
+"""Client for the OpenVPN management interface (unix socket).
 
-OpenVPN accetta un solo client di management alla volta e scrive nel log ogni
-connessione e disconnessione: si tiene quindi aperta una sola connessione,
-condivisa sotto lock e riaperta quando OpenVPN si riavvia.
+OpenVPN accepts one management client at a time and logs every connect and
+disconnect, so a single connection is kept open, shared under a lock and
+reopened when OpenVPN restarts.
 """
 import socket
 import threading
@@ -11,7 +11,7 @@ from .config import CONFIG
 
 TIMEOUT = 3
 _lock = threading.Lock()
-_conn = None  # (socket, file in lettura)
+_conn = None  # (socket, reader)
 
 
 class MgmtError(Exception):
@@ -44,9 +44,9 @@ def _exchange(cmd: str, multiline: bool) -> list:
     while True:
         line = rf.readline()
         if not line:
-            raise ConnectionResetError("connessione chiusa da OpenVPN")
+            raise ConnectionResetError("connection closed by OpenVPN")
         line = line.rstrip("\r\n")
-        if line.startswith(">"):  # benvenuto e notifiche asincrone
+        if line.startswith(">"):  # greeting and asynchronous notifications
             continue
         if line.startswith("ERROR:"):
             raise MgmtError(line[6:].strip())
@@ -60,7 +60,7 @@ def _exchange(cmd: str, multiline: bool) -> list:
 
 def _command(cmd: str, multiline: bool) -> list:
     with _lock:
-        # un secondo tentativo con una connessione nuova copre il riavvio di OpenVPN
+        # a second attempt on a fresh connection covers an OpenVPN restart
         for attempt in (1, 2):
             try:
                 if _conn is None:
@@ -71,11 +71,11 @@ def _command(cmd: str, multiline: bool) -> list:
             except OSError as e:
                 _close()
                 if attempt == 2:
-                    raise MgmtError(f"OpenVPN non raggiungibile ({e})")
+                    raise MgmtError(f"OpenVPN is not reachable ({e})")
 
 
 def clients() -> dict:
-    """CN -> dati del client connesso."""
+    """CN -> data about the connected client."""
     header, out = None, {}
     for line in _command("status 3", multiline=True):
         f = line.split("\t")
@@ -126,5 +126,5 @@ def kill(cn: str):
     try:
         _command(f"kill {cn}", multiline=False)
     except MgmtError as e:
-        if "common name" not in str(e).lower():  # non connesso: niente da fare
+        if "common name" not in str(e).lower():  # not connected: nothing to do
             raise

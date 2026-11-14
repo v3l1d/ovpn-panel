@@ -1,1 +1,1 @@
-"""ovpn-panel - dashboard web per gestire un server OpenVPN."""
+"""ovpn-panel - web dashboard for managing an OpenVPN server."""

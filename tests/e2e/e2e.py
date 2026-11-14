@@ -1,7 +1,7 @@
-"""Test end-to-end contro un'installazione reale (creata da tests/run.sh).
+"""End-to-end test against a real installation (created by tests/run.sh).
 
-Usa l'API come il pannello e alza tunnel OpenVPN veri. SMOKE=1 fa solo i controlli rapidi
-(usato dopo il riavvio del container per verificare che tutto riparta da solo).
+Drives the API the way the panel does and brings up real OpenVPN tunnels. SMOKE=1 runs only
+the quick checks (used after restarting the container, to verify everything comes back by itself).
 """
 import os
 import subprocess
@@ -30,7 +30,7 @@ def check(ok, what):
 def api(method, path, expect=200, **kw):
     r = S.request(method, URL + path, timeout=60, **kw)
     if expect is not None and r.status_code != expect:
-        raise AssertionError(f"{method} {path}: atteso {expect}, ricevuto {r.status_code} {r.text[:200]}")
+        raise AssertionError(f"{method} {path}: expected {expect}, got {r.status_code} {r.text[:200]}")
     return r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text
 
 
@@ -79,105 +79,111 @@ def server_up():
         return False
 
 
-# test: niente default route nel container, solo la rete VPN e un IP pubblico per provare il NAT
+def done():
+    print(f"\n{'ALL OK' if not failures else f'{len(failures)} CHECKS FAILED'}")
+    sys.exit(1 if failures else 0)
+
+
+# in the test container: no default route through the VPN, only the VPN network and one public IP
+# to exercise the server's NAT
 SPLIT = f'pull-filter ignore "redirect-gateway"\nroute {INTERNET} 255.255.255.255\n'
 
 step("Login")
-check(S.post(URL + "/api/login", json={"username": "admin", "password": "sbagliata"}, timeout=30).status_code == 401,
-      "password errata rifiutata")
+check(S.post(URL + "/api/login", json={"username": "admin", "password": "wrong"}, timeout=30).status_code == 401,
+      "wrong password rejected")
 tok = api("POST", "/api/login", json={"username": os.environ["ADMIN_USER"], "password": os.environ["ADMIN_PASSWORD"]})["token"]
 S.headers["Authorization"] = "Bearer " + tok
-check(True, "login amministratore")
+check(True, "admin login")
 
 step("Server")
-check(wait_for(server_up), "OpenVPN in esecuzione (management raggiungibile)")
+check(wait_for(server_up), "OpenVPN running (management interface reachable)")
 ov = api("GET", "/api/overview")
-check(ov["server"].get("version", "").startswith("2."), f"versione OpenVPN letta ({ov['server'].get('version')})")
-check(len(api("GET", "/api/server/log?lines=50")) > 0, "log del server disponibile")
+check(ov["server"].get("version", "").startswith("2."), f"OpenVPN version read ({ov['server'].get('version')})")
+log_lines = api("GET", "/api/server/log?lines=50")
+check(len(log_lines) > 0, "server log available")
+check(not any(l["msg"].startswith("MANAGEMENT:") for l in log_lines), "log free of the panel's own management lines")
 
 if os.environ.get("SMOKE"):
-    print(f"\n{'TUTTO OK' if not failures else f'{len(failures)} VERIFICHE FALLITE'}")
-    sys.exit(1 if failures else 0)
+    done()
 
 name = f"e2e{int(time.time()) % 100000}"
 try:
-    step("Creazione utente")
-    r = api("POST", "/api/users", json={"name": name, "note": "test automatico"})
+    step("Create a user")
+    r = api("POST", "/api/users", json={"name": name, "note": "automated test"})
     uid, share = r["user"]["id"], r["share"]
-    check("/p/" in share["url"] and share["qr"].startswith("data:image/svg+xml"), "link di attivazione e QR")
-    check(S.post(URL + "/api/users", json={"name": name}, timeout=30).status_code == 409, "nome duplicato rifiutato")
-    check(S.post(URL + "/api/users", json={"name": "Nome Non Valido"}, timeout=30).status_code == 422, "nome non valido rifiutato")
+    check("/p/" in share["url"] and share["qr"].startswith("data:image/svg+xml"), "activation link and QR code")
+    check(S.post(URL + "/api/users", json={"name": name}, timeout=30).status_code == 409, "duplicate name rejected")
+    check(S.post(URL + "/api/users", json={"name": "Not Valid"}, timeout=30).status_code == 422, "invalid name rejected")
     token = share["url"].rsplit("/", 1)[1]
     page = api("GET", f"/p/{token}")
-    check("Attiva la VPN" in page, "pagina di attivazione")
-    check(api("GET", f"/dl/{token}/info")["filename"] == f"{name}.ovpn", "la pagina riconosce il profilo")
+    check("Set up your VPN" in page, "activation page")
+    check(api("GET", f"/dl/{token}/info")["filename"] == f"{name}.ovpn", "the page recognizes the profile")
     profile = api("GET", f"/dl/{token}")
     check(profile == api("GET", f"/api/users/{uid}/profile") and "<tls-crypt>" in profile and "remote pve 1194" in profile,
-          "profilo scaricato dal link uguale a quello del pannello")
+          "profile from the link matches the one in the panel")
 
-    step("Connessione")
+    step("Connect")
     log = start_vpn(profile, "a", SPLIT)
-    check(wait_for(lambda: connected(log)), "tunnel OpenVPN stabilito")
-    check(ping("10.9.0.1"), "ping al server attraverso il tunnel")
-    check("dev tun" in sh(f"ip route get {INTERNET}") and ping(INTERNET), "uscita su Internet attraverso il server (NAT)")
-    check(wait_for(lambda: (user(name) or {}).get("online")), "utente online nel pannello")
+    check(wait_for(lambda: connected(log)), "OpenVPN tunnel established")
+    check(ping("10.9.0.1"), "ping the server through the tunnel")
+    check("dev tun" in sh(f"ip route get {INTERNET}") and ping(INTERNET), "Internet through the server (NAT)")
+    check(wait_for(lambda: (user(name) or {}).get("online")), "user shown online in the panel")
     u = user(name)
-    check((u.get("vpn_ip") or "").startswith("10.9.0.") and u.get("real_address"), f"IP VPN e indirizzo reale ({u.get('vpn_ip')})")
-    check(api("GET", "/api/overview")["server"]["nclients"] >= 1, "client conteggiato nelle statistiche")
+    check((u.get("vpn_ip") or "").startswith("10.9.0.") and u.get("real_address"), f"VPN IP and real address ({u.get('vpn_ip')})")
+    check(api("GET", "/api/overview")["server"]["nclients"] >= 1, "client counted in the statistics")
 
-    step("Disconnetti e disabilita")
+    step("Disconnect and disable")
     api("POST", f"/api/users/{uid}/kick")
     check(any("kill" in l["msg"].lower() or name in l["msg"] for l in api("GET", "/api/server/log?lines=40")),
-          "disconnessione registrata nel log")
+          "disconnect recorded in the log")
     api("PATCH", f"/api/users/{uid}", json={"enabled": False})
-    check(wait_for(lambda: not user(name)["online"], 30), "utente disabilitato non piu' connesso")
+    check(wait_for(lambda: not user(name)["online"], 30), "disabled user no longer connected")
     time.sleep(8)
-    check(not user(name)["online"], "e non riesce a riconnettersi")
-    check(S.get(URL + f"/dl/{token}/info", timeout=30).status_code == 404, "link di attivazione invalidato")
+    check(not user(name)["online"], "and cannot reconnect")
+    check(S.get(URL + f"/dl/{token}/info", timeout=30).status_code == 404, "activation link invalidated")
     stop_vpn("a")
     api("PATCH", f"/api/users/{uid}", json={"enabled": True})
     log = start_vpn(profile, "b", SPLIT)
-    check(wait_for(lambda: connected(log)), "riabilitato: si riconnette con lo stesso profilo")
+    check(wait_for(lambda: connected(log)), "re-enabled: reconnects with the same profile")
     stop_vpn("b")
 
-    step("Rinnovo certificato")
+    step("Renew the certificate")
     r = api("POST", f"/api/users/{uid}/renew")
     new_profile = api("GET", f"/dl/{r['share']['url'].rsplit('/', 1)[1]}")
-    check(new_profile != profile, "nuovo profilo emesso")
+    check(new_profile != profile, "new profile issued")
     log = start_vpn(profile, "c", SPLIT)
-    check(not wait_for(lambda: connected(log), 12), "il vecchio profilo e' rifiutato (certificato revocato)")
+    check(not wait_for(lambda: connected(log), 12), "the old profile is rejected (certificate revoked)")
     stop_vpn("c")
     log = start_vpn(new_profile, "d", SPLIT)
-    check(wait_for(lambda: connected(log)), "il nuovo profilo si connette")
+    check(wait_for(lambda: connected(log)), "the new profile connects")
     stop_vpn("d")
 
-    step("Impostazioni del server")
+    step("Server settings")
     original = api("GET", "/api/settings")["values"]
-    check(S.put(URL + "/api/settings", json={**original, "endpoint_host": "non valido!"}, timeout=30).status_code == 422,
-          "endpoint non valido rifiutato")
+    check(S.put(URL + "/api/settings", json={**original, "endpoint_host": "not valid!"}, timeout=30).status_code == 422,
+          "invalid endpoint rejected")
     r = api("PUT", "/api/settings", json={**original, "full_tunnel": False, "routes": "10.77.0.0/24", "dns": "9.9.9.9"})
-    check(r["restarted"], "salvare l'instradamento riavvia OpenVPN")
-    check(wait_for(server_up, 30), "OpenVPN di nuovo attivo dopo il riavvio")
+    check(r["restarted"], "saving the routing restarts OpenVPN")
+    check(wait_for(server_up, 30), "OpenVPN back up after the restart")
     log = start_vpn(new_profile, "e")
-    check(wait_for(lambda: connected(log)), "connessione con le nuove impostazioni")
+    check(wait_for(lambda: connected(log)), "connects with the new settings")
     routes = sh("ip route")
-    check("10.77.0.0/24" in routes and "0.0.0.0/1" not in routes, "il client riceve solo la rete indicata (split tunnel)")
+    check("10.77.0.0/24" in routes and "0.0.0.0/1" not in routes, "the client only gets the configured network (split tunnel)")
     stop_vpn("e")
-    r = api("PUT", "/api/settings", json={**original, "endpoint_host": "casa.example.net", "public_port": 51194})
-    check(not r["restarted"], "cambiare l'endpoint non riavvia OpenVPN")
-    check("remote casa.example.net 51194" in api("GET", f"/api/users/{uid}/profile"), "il profilo usa il nuovo endpoint")
+    r = api("PUT", "/api/settings", json={**original, "endpoint_host": "home.example.net", "public_port": 51194})
+    check(not r["restarted"], "changing the endpoint does not restart OpenVPN")
+    check("remote home.example.net 51194" in api("GET", f"/api/users/{uid}/profile"), "the profile uses the new endpoint")
     api("PUT", "/api/settings", json=original)
-    check(wait_for(server_up, 30), "impostazioni originali ripristinate")
+    check(wait_for(server_up, 30), "original settings restored")
 
-    step("Riavvio e account")
+    step("Restart and account")
     api("POST", "/api/server/restart")
-    check(wait_for(server_up, 30), "riavvio di OpenVPN dal pannello")
-    check(S.post(URL + "/api/me/password", json={"current": "sbagliata", "new": "nuovapassword123"}, timeout=30).status_code == 400,
-          "cambio password con password attuale errata rifiutato")
+    check(wait_for(server_up, 30), "OpenVPN restarted from the panel")
+    check(S.post(URL + "/api/me/password", json={"current": "wrong", "new": "newpassword123"}, timeout=30).status_code == 400,
+          "password change with a wrong current password rejected")
 finally:
     if user(name):
         api("DELETE", f"/api/users/{user(name)['id']}")
-check(user(name) is None and S.get(URL + f"/dl/{token}/info", timeout=30).status_code == 404, "utente eliminato e link invalidato")
+check(user(name) is None and S.get(URL + f"/dl/{token}/info", timeout=30).status_code == 404, "user deleted and link invalidated")
 
-print(f"\n{'TUTTO OK' if not failures else f'{len(failures)} VERIFICHE FALLITE'}")
-sys.exit(1 if failures else 0)
+done()

@@ -1,4 +1,4 @@
-"""Certificati client (easy-rsa) e profili .ovpn."""
+"""Client certificates (easy-rsa) and .ovpn profiles."""
 import os
 import secrets
 import shutil
@@ -6,7 +6,7 @@ import subprocess
 
 from .config import CONFIG
 
-# CRL a 180 giorni (default) bloccherebbe tutti i client alla scadenza
+# the default 180-day CRL would lock out every client when it expires
 _ENV = {"EASYRSA_BATCH": "1", "EASYRSA_CRL_DAYS": "3650", "EASYRSA_CERT_EXPIRE": "3650",
         "EASYRSA_ALGO": "ec", "EASYRSA_CURVE": "prime256v1"}
 
@@ -37,7 +37,7 @@ def issue(cn: str):
 
 
 def profile(cn: str, s: dict) -> str:
-    """Profilo .ovpn completo, rigenerato dalla PKI a ogni richiesta."""
+    """Complete .ovpn profile, rebuilt from the PKI on every request."""
     pki = os.path.join(CONFIG.easyrsa_dir, "pki")
     ca = _pem_block(_read(os.path.join(pki, "ca.crt")), "CERTIFICATE")
     cert = _pem_block(_read(os.path.join(pki, "issued", f"{cn}.crt")), "CERTIFICATE")
@@ -70,8 +70,8 @@ def profile(cn: str, s: dict) -> str:
 def revoke(cn: str):
     _easyrsa("revoke", cn)
     _easyrsa("gen-crl")
-    # openvpn rilegge la CRL a ogni connessione: sostituzione atomica,
-    # altrimenti un client che si collega durante la scrittura trova il file troncato
+    # openvpn rereads the CRL on every connection: replace it atomically, otherwise
+    # a client connecting while it is being written would see a truncated file
     dest = os.path.join(CONFIG.server_dir, "crl.pem")
     shutil.copyfile(os.path.join(CONFIG.easyrsa_dir, "pki", "crl.pem"), dest + ".tmp")
     os.chmod(dest + ".tmp", 0o644)
@@ -80,7 +80,7 @@ def revoke(cn: str):
 
 
 def set_disabled(cn: str, disabled: bool):
-    """Blocca/sblocca un client via client-config-dir (vale dalla connessione successiva)."""
+    """Blocks/unblocks a client via client-config-dir (applies from its next connection)."""
     ccd = os.path.join(CONFIG.server_dir, "ccd")
     os.makedirs(ccd, exist_ok=True)
     path = os.path.join(ccd, cn)

@@ -1,6 +1,6 @@
-"""Crea dist/ovpn-panel-proxmox.sh: lo script Proxmox con l'applicazione incorporata.
+"""Builds dist/ovpn-panel-proxmox.sh: the Proxmox script with the application embedded.
 
-Il file risultante e' l'unico da copiare sul nodo Proxmox.
+The resulting file is the only one to copy to the Proxmox node (useful for offline installs).
     python tools/build.py
 """
 import base64
@@ -16,11 +16,11 @@ def _add(tar: tarfile.TarFile, path: pathlib.Path):
     rel = path.relative_to(ROOT).as_posix()
     data = path.read_bytes()
     if path.suffix in TEXT:
-        data = data.replace(b"\r\n", b"\n")  # sorgenti scritti su Windows
+        data = data.replace(b"\r\n", b"\n")  # sources edited on Windows
     info = tarfile.TarInfo(rel)
     info.size = len(data)
     info.mode = 0o755 if path.suffix == ".sh" else 0o644
-    info.mtime = 0  # build riproducibile
+    info.mtime = 0  # reproducible build
     tar.addfile(info, io.BytesIO(data))
 
 
@@ -35,7 +35,7 @@ def main():
     script = (ROOT / "proxmox" / "create-ct.sh").read_text(encoding="utf-8").replace("\r\n", "\n")
     out = ROOT / "dist" / "ovpn-panel-proxmox.sh"
     out.parent.mkdir(exist_ok=True)
-    # exit prima del marcatore: bash non deve mai interpretare il payload
+    # exit before the marker: bash must never interpret the payload
     out.write_bytes((script.rstrip("\n") + "\nexit 0\n__PAYLOAD_BELOW__\n" + payload).encode())
     print(f"{out.relative_to(ROOT)}  ({out.stat().st_size // 1024} KB)")
 

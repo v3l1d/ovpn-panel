@@ -1,25 +1,11 @@
 #!/usr/bin/env bash
-# Crea su Proxmox VE un container LXC Debian 12 con OpenVPN + ovpn-panel, gia' configurato.
-# Da lanciare sulla shell del nodo Proxmox (Datacenter > nodo > Shell), come root:
-#
-#   bash ovpn-panel-proxmox.sh                         # interattivo
-#   bash ovpn-panel-proxmox.sh --yes --public-host casa.ddns.net
-#
-# Opzioni (anche come variabili d'ambiente, es. CTID=120):
-#   --ctid N            ID del container            (default: primo libero)
-#   --hostname NOME     hostname                    (default: ovpn-panel)
-#   --public-host H     DDNS o IP pubblico per i client (default: IP del container, da cambiare poi)
-#   --storage S         storage per il disco        (default: local-lvm o il primo disponibile)
-#   --template-storage S storage dei template       (default: local)
-#   --bridge B          bridge di rete              (default: vmbr0)
-#   --ip CIDR|dhcp      indirizzo IPv4              (default: dhcp)
-#   --gw IP             gateway, con --ip statico
-#   --disk GB --memory MB --cores N                 (default: 4 / 512 / 1)
-#   --port N --proto udp|tcp                        porta OpenVPN (default: 1194/udp)
-#   --panel-port N      porta del pannello          (default: 8443)
-#   --ssh-key FILE      chiave pubblica per l'accesso root via SSH
-#   --yes               non chiedere conferme
+# Creates a Debian 12 LXC container on Proxmox VE with OpenVPN + ovpn-panel, fully configured.
+# Run it as root in the Proxmox node shell (Datacenter > node > Shell). See docs/INSTALL.md.
 set -euo pipefail
+
+# Where the application is downloaded from when this script runs on its own (e.g. through curl).
+REPO_URL="${OVPN_PANEL_REPO_URL:-https://github.com/OWNER/ovpn-panel}"
+REPO_REF="${OVPN_PANEL_REF:-main}"
 
 CTID="${CTID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-ovpn-panel}"
@@ -37,11 +23,42 @@ OVPN_PROTO="${OVPN_PROTO:-udp}"
 PANEL_PORT="${PANEL_PORT:-8443}"
 SSH_KEY="${SSH_KEY:-}"
 YES="${YES:-0}"
+UPDATE_CTID=""
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-die() { printf '\033[31mErrore: %s\033[0m\n' "$*" >&2; exit 1; }
-usage() { sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; exit 0; }
+die() { printf '\033[31mError: %s\033[0m\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+Creates a Debian 12 LXC container on Proxmox VE with OpenVPN + ovpn-panel.
+
+Usage: create-ct.sh [options]
+Every option can also be given as an environment variable (e.g. CTID=120).
+
+  --ctid N              container ID                          (default: next free ID)
+  --hostname NAME       container hostname                    (default: ovpn-panel)
+  --public-host HOST    DDNS name or public IP for clients    (default: container IP, set it later in the panel)
+  --storage NAME        storage for the root disk             (default: local-lvm, else the first available)
+  --template-storage S  storage for the Debian template       (default: local)
+  --bridge NAME         network bridge                        (default: vmbr0)
+  --ip CIDR|dhcp        IPv4 address                          (default: dhcp)
+  --gw IP               gateway, required with a static --ip
+  --disk GB             root disk size                        (default: 4)
+  --memory MB           RAM                                   (default: 512)
+  --cores N             CPU cores                             (default: 1)
+  --port N              OpenVPN port                          (default: 1194)
+  --proto udp|tcp       OpenVPN protocol                      (default: udp)
+  --panel-port N        panel HTTPS port                      (default: 8443)
+  --ssh-key FILE        public key for root SSH access
+  --repo URL            repository to download the app from   (default: OVPN_PANEL_REPO_URL)
+  --update ID           upgrade the panel in an existing container instead of creating one
+                        (users, certificates and settings are kept)
+  -y, --yes             do not ask for confirmation
+  -h, --help            show this help
+EOF
+  exit 0
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -60,72 +77,104 @@ while [[ $# -gt 0 ]]; do
     --proto) OVPN_PROTO="$2"; shift 2 ;;
     --panel-port) PANEL_PORT="$2"; shift 2 ;;
     --ssh-key) SSH_KEY="$2"; shift 2 ;;
+    --repo) REPO_URL="$2"; shift 2 ;;
+    --update) UPDATE_CTID="$2"; shift 2 ;;
     -y|--yes) YES=1; shift ;;
     -h|--help) usage ;;
-    *) die "opzione sconosciuta: $1 (vedi --help)" ;;
+    *) die "unknown option: $1 (see --help)" ;;
   esac
 done
 
-# ---------------------------------------------------------------- controlli
-[[ $EUID -eq 0 ]] || die "esegui come root sulla shell del nodo Proxmox"
-command -v pct >/dev/null && command -v pveam >/dev/null || die "pct/pveam non trovati: questo script va lanciato su un nodo Proxmox VE"
-[[ $OVPN_PROTO == udp || $OVPN_PROTO == tcp ]] || die "--proto deve essere udp o tcp"
-[[ $IP == dhcp || $IP =~ ^[0-9.]+/[0-9]+$ ]] || die "--ip deve essere dhcp o un CIDR (es. 192.168.1.50/24)"
-[[ $IP == dhcp || -n $GW ]] || die "con --ip statico serve anche --gw"
-[[ -z $SSH_KEY || -f $SSH_KEY ]] || die "chiave SSH non trovata: $SSH_KEY"
+# ---------------------------------------------------------------- checks
+[[ $EUID -eq 0 ]] || die "run as root in the Proxmox node shell"
+command -v pct >/dev/null && command -v pveam >/dev/null || die "pct/pveam not found: run this script on a Proxmox VE node"
+[[ $OVPN_PROTO == udp || $OVPN_PROTO == tcp ]] || die "--proto must be udp or tcp"
+[[ $IP == dhcp || $IP =~ ^[0-9.]+/[0-9]+$ ]] || die "--ip must be dhcp or a CIDR (e.g. 192.168.1.50/24)"
+[[ $IP == dhcp || -n $GW ]] || die "a static --ip also needs --gw"
+[[ -z $SSH_KEY || -f $SSH_KEY ]] || die "SSH key not found: $SSH_KEY"
 
-CTID="${CTID:-$(pvesh get /cluster/nextid)}"
-[[ ! -e /etc/pve/lxc/$CTID.conf ]] || die "il container $CTID esiste gia'"
+if [[ -n $UPDATE_CTID ]]; then
+  [[ -e /etc/pve/lxc/$UPDATE_CTID.conf ]] || die "container $UPDATE_CTID does not exist"
+  pct status "$UPDATE_CTID" | grep -q running || die "container $UPDATE_CTID is not running (pct start $UPDATE_CTID)"
+else
+  CTID="${CTID:-$(pvesh get /cluster/nextid)}"
+  [[ ! -e /etc/pve/lxc/$CTID.conf ]] || die "container $CTID already exists"
 
-if [[ -z $STORAGE ]]; then
-  storages="$(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 && $3=="active" {print $1}')"
-  if grep -qx local-lvm <<<"$storages"; then STORAGE=local-lvm; else STORAGE="$(head -n1 <<<"$storages")"; fi
-  [[ -n $STORAGE ]] || die "nessuno storage attivo per i container: indica --storage"
+  if [[ -z $STORAGE ]]; then
+    storages="$(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 && $3=="active" {print $1}')"
+    if grep -qx local-lvm <<<"$storages"; then STORAGE=local-lvm; else STORAGE="$(head -n1 <<<"$storages")"; fi
+    [[ -n $STORAGE ]] || die "no active storage for containers: use --storage"
+  fi
+
+  if [[ -z $PUBLIC_HOST && $YES != 1 && -t 0 ]]; then
+    read -rp "DDNS name or public IP that clients use to reach the VPN (Enter = set it later in the panel): " PUBLIC_HOST
+  fi
 fi
 
-if [[ -z $PUBLIC_HOST && $YES != 1 && -t 0 ]]; then
-  read -rp "DDNS o IP pubblico con cui i client raggiungono la VPN (invio = decidi dopo dal pannello): " PUBLIC_HOST
-fi
-
-# ---------------------------------------------------------------- sorgente dell'applicazione
+# ---------------------------------------------------------------- application source
+# 1. dist/ovpn-panel-proxmox.sh carries the app after a __PAYLOAD_BELOW__ marker
+# 2. run from a checkout of the repository: use ../app
+# 3. run on its own (curl): download the repository archive
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || echo "$0")"
-if grep -q '^__PAYLOAD_BELOW__$' "$SCRIPT_PATH" 2>/dev/null; then
-  sed '1,/^__PAYLOAD_BELOW__$/d' "$SCRIPT_PATH" | base64 -d > "$WORK/app.tgz" || die "pacchetto incorporato danneggiato"
-elif [[ -f $(dirname "$SCRIPT_PATH")/../app/install.sh ]]; then
+if [[ -f $SCRIPT_PATH ]] && grep -q '^__PAYLOAD_BELOW__$' "$SCRIPT_PATH"; then
+  sed '1,/^__PAYLOAD_BELOW__$/d' "$SCRIPT_PATH" | base64 -d > "$WORK/app.tgz" || die "the embedded package is corrupted"
+elif [[ -f $SCRIPT_PATH && -f $(dirname "$SCRIPT_PATH")/../app/install.sh ]]; then
   tar czf "$WORK/app.tgz" -C "$(dirname "$SCRIPT_PATH")/.." app
 else
-  die "applicazione non trovata: usa dist/ovpn-panel-proxmox.sh oppure lancia lo script dalla cartella del repo"
+  step "Downloading ovpn-panel ($REPO_URL, $REPO_REF)"
+  mkdir "$WORK/src"
+  # GitHub and Gitea/Forgejo use different archive paths
+  for url in "$REPO_URL/archive/refs/heads/$REPO_REF.tar.gz" "$REPO_URL/archive/$REPO_REF.tar.gz"; do
+    curl -fsSL "$url" 2>/dev/null | tar xz -C "$WORK/src" 2>/dev/null && break
+  done
+  app_dir="$(find "$WORK/src" -mindepth 2 -maxdepth 2 -type d -name app | head -n1)"
+  [[ -n $app_dir && -f $app_dir/install.sh ]] || die "could not download the application from $REPO_URL (use --repo)"
+  tar czf "$WORK/app.tgz" -C "$(dirname "$app_dir")" app
 fi
 
-# ---------------------------------------------------------------- riepilogo
-bold "Verra' creato questo container:"
+install_app() {  # $1 = container ID; extra env vars are passed to install.sh
+  local id="$1"; shift
+  pct push "$id" "$WORK/app.tgz" /root/ovpn-panel.tgz
+  pct exec "$id" -- sh -c 'rm -rf /root/ovpn-panel-src && mkdir -p /root/ovpn-panel-src && tar xzf /root/ovpn-panel.tgz -C /root/ovpn-panel-src && rm /root/ovpn-panel.tgz'
+  pct exec "$id" -- env "$@" bash /root/ovpn-panel-src/app/install.sh
+}
+
+if [[ -n $UPDATE_CTID ]]; then
+  step "Upgrading ovpn-panel in container $UPDATE_CTID"
+  install_app "$UPDATE_CTID"
+  printf '\n%s\n' "$(bold "Done. Users, certificates and settings were kept.")"
+  exit 0
+fi
+
+# ---------------------------------------------------------------- summary
+bold "This container will be created:"
 cat <<EOF
   ID           $CTID ($CT_HOSTNAME)
-  Risorse      $CORES core, $MEMORY MB RAM, $DISK GB su $STORAGE
-  Rete         $BRIDGE, IP $IP${GW:+, gateway $GW}
-  OpenVPN      porta $OVPN_PORT/$OVPN_PROTO, endpoint ${PUBLIC_HOST:-<IP del container, da impostare nel pannello>}
-  Pannello     porta $PANEL_PORT (HTTPS)
+  Resources    $CORES core(s), $MEMORY MB RAM, $DISK GB on $STORAGE
+  Network      $BRIDGE, IP $IP${GW:+, gateway $GW}
+  OpenVPN      port $OVPN_PORT/$OVPN_PROTO, endpoint ${PUBLIC_HOST:-<container IP, set it later in the panel>}
+  Panel        port $PANEL_PORT (HTTPS)
 EOF
 if [[ $YES != 1 ]]; then
-  read -rp "Procedo? [s/N] " ok
-  [[ $ok =~ ^[sSyY]$ ]] || { echo "Annullato."; exit 0; }
+  read -rp "Continue? [y/N] " ok
+  [[ $ok =~ ^[yY]$ ]] || { echo "Aborted."; exit 0; }
 fi
 
 # ---------------------------------------------------------------- template
-step "Template Debian 12"
-pveam update >/dev/null 2>&1 || echo "  (aggiornamento lista template non riuscito, uso quella in cache)"
+step "Debian 12 template"
+pveam update >/dev/null 2>&1 || echo "  (could not refresh the template list, using the cached one)"
 TEMPLATE="$(pveam available --section system 2>/dev/null | awk '{print $2}' | grep -E '^debian-12-standard_.*_amd64\.tar\.(zst|gz|xz)$' | sort -V | tail -n1)"
-[[ -n $TEMPLATE ]] || die "template Debian 12 non trovato in 'pveam available'"
+[[ -n $TEMPLATE ]] || die "no Debian 12 template found in 'pveam available'"
 if pveam list "$TEMPLATE_STORAGE" 2>/dev/null | grep -q "$TEMPLATE"; then
-  echo "  $TEMPLATE gia' presente"
+  echo "  $TEMPLATE already downloaded"
 else
   pveam download "$TEMPLATE_STORAGE" "$TEMPLATE"
 fi
 
 # ---------------------------------------------------------------- container
-step "Creazione del container $CTID"
+step "Creating container $CTID"
 net="name=eth0,bridge=$BRIDGE,ip=$IP${GW:+,gw=$GW}"
 pct create "$CTID" "$TEMPLATE_STORAGE:vztmpl/$TEMPLATE" \
   --hostname "$CT_HOSTNAME" --ostype debian \
@@ -135,38 +184,35 @@ pct create "$CTID" "$TEMPLATE_STORAGE:vztmpl/$TEMPLATE" \
   --tags ovpn-panel --description "OpenVPN + ovpn-panel" \
   ${SSH_KEY:+--ssh-public-keys "$SSH_KEY"}
 
-# OpenVPN ha bisogno di /dev/net/tun dentro il container
+# OpenVPN needs /dev/net/tun inside the container
 cat >> "/etc/pve/lxc/$CTID.conf" <<'EOF'
 lxc.cgroup2.devices.allow: c 10:200 rwm
 lxc.mount.entry: /dev/net dev/net none bind,create=dir
 EOF
 
-# da qui in poi, in caso di errore il container resta per poterlo esaminare
+# from here on, a failed install keeps the container around for inspection
 on_fail() {
   rm -rf "$WORK"
-  printf '\n\033[31mInstallazione interrotta.\033[0m Il container %s e'"'"' rimasto per il debug:\n' "$CTID"
-  printf '  pct enter %s              # per esaminarlo\n  pct destroy %s --purge   # per eliminarlo\n' "$CTID" "$CTID"
+  printf '\n\033[31mInstallation stopped.\033[0m Container %s was kept for debugging:\n' "$CTID"
+  printf '  pct enter %s              # to inspect it\n  pct destroy %s --purge   # to remove it\n' "$CTID" "$CTID"
 }
 trap on_fail EXIT
 
-step "Avvio e attesa della rete"
+step "Starting the container and waiting for the network"
 pct start "$CTID"
 for i in $(seq 60); do
   if pct exec "$CTID" -- sh -c 'ip -4 route show default | grep -q . && getent hosts deb.debian.org >/dev/null' 2>/dev/null; then
     break
   fi
-  [[ $i -lt 60 ]] || die "il container non ha accesso a Internet (DHCP/DNS?)"
+  [[ $i -lt 60 ]] || die "the container has no Internet access (check DHCP/DNS)"
   sleep 2
 done
 CT_IP="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
-echo "  IP del container: $CT_IP"
+echo "  Container IP: $CT_IP"
 
-step "Installazione di OpenVPN e del pannello"
-pct push "$CTID" "$WORK/app.tgz" /root/ovpn-panel.tgz
-pct exec "$CTID" -- sh -c 'rm -rf /root/ovpn-panel-src && mkdir -p /root/ovpn-panel-src && tar xzf /root/ovpn-panel.tgz -C /root/ovpn-panel-src && rm /root/ovpn-panel.tgz'
-pct exec "$CTID" -- env \
-  PUBLIC_HOST="$PUBLIC_HOST" OVPN_PORT="$OVPN_PORT" OVPN_PROTO="$OVPN_PROTO" PANEL_PORT="$PANEL_PORT" \
-  bash /root/ovpn-panel-src/app/install.sh
+step "Installing OpenVPN and the panel"
+install_app "$CTID" \
+  PUBLIC_HOST="$PUBLIC_HOST" OVPN_PORT="$OVPN_PORT" OVPN_PROTO="$OVPN_PROTO" PANEL_PORT="$PANEL_PORT"
 
 CREDS="$(pct exec "$CTID" -- cat /root/ovpn-panel-credentials.txt)"
 ADMIN_USER="$(sed -n 's/^username=//p' <<<"$CREDS")"
@@ -175,16 +221,15 @@ trap 'rm -rf "$WORK"' EXIT
 
 cat <<EOF
 
-$(bold "Fatto. Container $CTID pronto.")
+$(bold "Done. Container $CTID is ready.")
 
-  Pannello     https://$CT_IP:$PANEL_PORT/
-  Utente       $ADMIN_USER
+  Panel        https://$CT_IP:$PANEL_PORT/
+  Username     $ADMIN_USER
   Password     $ADMIN_PASSWORD
-               (salvata anche nel container: pct exec $CTID -- cat /root/ovpn-panel-credentials.txt)
+               (also stored in the container: pct exec $CTID -- cat /root/ovpn-panel-credentials.txt)
 
-  Sul router inoltra $OVPN_PORT/$OVPN_PROTO verso $CT_IP.
-  Il pannello non serve esporlo su Internet: basta raggiungerlo dalla LAN.
-  Se vuoi che gli utenti aprano i QR da fuori casa, inoltra anche $PANEL_PORT/tcp.
+  On your router, forward $OVPN_PORT/$OVPN_PROTO to $CT_IP.
+  The panel does not need to be exposed to the Internet: reaching it from your LAN is enough.
 $( [[ -n $PUBLIC_HOST ]] || echo "
-  Endpoint pubblico non impostato: aprilo dal pannello in Impostazioni prima di creare utenti." )
+  No public endpoint set: open Settings in the panel and set it before creating users." )
 EOF

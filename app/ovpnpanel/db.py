@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS tokens(
     admin_id    INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
     expires_at  REAL NOT NULL
 );
--- un utente VPN = un certificato client
+-- one VPN user = one client certificate
 CREATE TABLE IF NOT EXISTS users(
     id          INTEGER PRIMARY KEY,
     name        TEXT UNIQUE NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users(
     enabled     INTEGER NOT NULL DEFAULT 1,
     created_at  TEXT NOT NULL
 );
--- link temporanei alla pagina di attivazione (il profilo si rigenera dalla PKI)
+-- temporary links to the activation page (the profile is rebuilt from the PKI)
 CREATE TABLE IF NOT EXISTS shares(
     token_hash  TEXT PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -52,7 +52,7 @@ def connect():
         yield conn
         conn.commit()
     finally:
-        # senza commit le modifiche vengono scartate (rollback implicito)
+        # without a commit, changes are discarded (implicit rollback)
         conn.close()
 
 

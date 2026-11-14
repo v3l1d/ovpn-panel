@@ -1,19 +1,19 @@
 #!/bin/bash
-# pct simulato: registra le chiamate; exec/push agiscono su questo stesso container.
+# Simulated pct: logs every call; exec/push act on this very container.
 echo "pct $*" >> /var/log/pve-sim.log
 cmd="$1"; shift
 case "$cmd" in
   create)
     id="$1"
-    [[ $* == *"--unprivileged 1"* && $* == *"--rootfs "* && $* == *"--net0 "* ]] || { echo "pct create: argomenti attesi mancanti" >&2; exit 2; }
+    [[ $* == *"--unprivileged 1"* && $* == *"--rootfs "* && $* == *"--net0 "* ]] || { echo "pct create: expected arguments missing" >&2; exit 2; }
     echo "arch: amd64" > "/etc/pve/lxc/$id.conf" ;;
   start|stop|set|destroy|enter) ;;
   exec)
     shift  # id
     [[ $1 == -- ]] && shift
-    # come il pct vero: ambiente ripulito e PATH senza /usr/local (bug trovato sul primo Proxmox reale)
+    # like the real pct: clean environment and a PATH without /usr/local (bug found on the first real Proxmox)
     exec env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root TERM="${TERM:-dumb}" "$@" ;;
   push)
     cp "$2" "$3" ;;
-  *) echo "pct simulato: comando non gestito $cmd" >&2; exit 2 ;;
+  *) echo "simulated pct: unhandled command $cmd" >&2; exit 2 ;;
 esac

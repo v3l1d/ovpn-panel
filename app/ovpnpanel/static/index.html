@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -190,12 +190,12 @@
   <div class="login-card">
     <div class="mark"><svg class="i"><use href="#i-lock"/></svg></div>
     <h1>OpenVPN Panel</h1>
-    <p class="sub">Accedi per gestire il server e gli utenti</p>
+    <p class="sub">Sign in to manage the server and its users</p>
     <form id="loginForm">
-      <label class="f">Utente <input id="lu" autocomplete="username" autocapitalize="none" required></label>
+      <label class="f">Username <input id="lu" autocomplete="username" autocapitalize="none" required></label>
       <label class="f">Password <input id="lp" type="password" autocomplete="current-password" required></label>
       <div class="err" id="loginErr"></div>
-      <button class="btn">Accedi</button>
+      <button class="btn">Sign in</button>
     </form>
   </div>
 </div>
@@ -204,122 +204,122 @@
   <aside>
     <div class="brand"><span class="mark"><svg class="i"><use href="#i-lock"/></svg></span>OpenVPN Panel</div>
     <nav id="nav">
-      <a href="#home" data-view="home"><svg class="i"><use href="#i-home"/></svg>Panoramica</a>
-      <a href="#users" data-view="users"><svg class="i"><use href="#i-users"/></svg>Utenti</a>
+      <a href="#home" data-view="home"><svg class="i"><use href="#i-home"/></svg>Overview</a>
+      <a href="#users" data-view="users"><svg class="i"><use href="#i-users"/></svg>Users</a>
       <a href="#server" data-view="server"><svg class="i"><use href="#i-server"/></svg>Server</a>
-      <a href="#settings" data-view="settings"><svg class="i"><use href="#i-gear"/></svg>Impostazioni</a>
+      <a href="#settings" data-view="settings"><svg class="i"><use href="#i-gear"/></svg>Settings</a>
     </nav>
     <div class="me"><span id="who"></span>
-      <button class="icon-btn" id="logout" title="Esci" aria-label="Esci"><svg class="i"><use href="#i-out"/></svg></button></div>
+      <button class="icon-btn" id="logout" title="Sign out" aria-label="Sign out"><svg class="i"><use href="#i-out"/></svg></button></div>
   </aside>
 
   <main>
     <div class="banner bad" id="downWarn" hidden>
-      <svg class="i"><use href="#i-alert"/></svg><span id="downMsg">OpenVPN non risponde.</span><a href="#server">Vai al server</a>
+      <svg class="i"><use href="#i-alert"/></svg><span id="downMsg">OpenVPN is not responding.</span><a href="#server">Go to Server</a>
     </div>
     <div class="banner" id="endpointWarn" hidden>
       <svg class="i"><use href="#i-alert"/></svg>
-      <span>L'endpoint <b id="epName"></b> va impostato con il tuo DDNS o IP pubblico, altrimenti i client non si collegano.</span>
-      <a href="#settings">Imposta</a>
+      <span>Set the endpoint <b id="epName"></b> to your DDNS name or public IP, otherwise clients cannot connect.</span>
+      <a href="#settings">Set it</a>
     </div>
 
     <section data-page="home" hidden>
-      <div class="head"><div><h1>Panoramica</h1><p id="homeSub"></p></div></div>
+      <div class="head"><div><h1>Overview</h1><p id="homeSub"></p></div></div>
       <div class="stats">
-        <div class="card stat"><b id="sOnline">0</b><span>Connessi ora</span></div>
-        <div class="card stat"><b id="sUsers">0</b><span>Utenti</span></div>
-        <div class="card stat"><b class="text" id="sTraffic">—</b><span>Traffico dall'avvio</span></div>
-        <div class="card stat"><b class="text" id="sEndpoint" title=""></b><span>Endpoint pubblico</span></div>
+        <div class="card stat"><b id="sOnline">0</b><span>Connected now</span></div>
+        <div class="card stat"><b id="sUsers">0</b><span>Users</span></div>
+        <div class="card stat"><b class="text" id="sTraffic">—</b><span>Traffic since start</span></div>
+        <div class="card stat"><b class="text" id="sEndpoint" title=""></b><span>Public endpoint</span></div>
       </div>
       <div class="card pad">
-        <h2>Nuovo utente</h2>
-        <p class="sub">Genera il certificato e il QR da far inquadrare: l'utente scarica il profilo e si connette con OpenVPN Connect.</p>
+        <h2>New user</h2>
+        <p class="sub">Creates a certificate and a QR code: the user scans it, downloads the profile and connects with OpenVPN Connect.</p>
         <form id="create" class="create">
-          <label class="f">Nome <small>minuscole, cifre, _ . -</small>
-            <input id="cName" pattern="[a-z0-9][a-z0-9_.\-]{1,31}" title="minuscole, cifre, _ . - (almeno 2 caratteri)" autocapitalize="none" required></label>
-          <label class="f">Nota <small>facoltativa, es. telefono di Marco</small>
+          <label class="f">Name <small>lowercase letters, digits, _ . -</small>
+            <input id="cName" pattern="[a-z0-9][a-z0-9_.\-]{1,31}" title="lowercase letters, digits, _ . - (at least 2 characters)" autocapitalize="none" required></label>
+          <label class="f">Note <small>optional, e.g. Anna's phone</small>
             <input id="cNote" maxlength="120"></label>
-          <button class="btn" id="cBtn"><svg class="i"><use href="#i-qr"/></svg>Crea e mostra QR</button>
+          <button class="btn" id="cBtn"><svg class="i"><use href="#i-qr"/></svg>Create and show QR</button>
         </form>
         <div class="err" id="cErr" style="margin-top:8px"></div>
       </div>
       <div class="card">
-        <div class="pad" style="padding-bottom:12px"><h2>Connessi ora</h2></div>
+        <div class="pad" style="padding-bottom:12px"><h2>Connected now</h2></div>
         <ul class="live" id="live"></ul>
       </div>
     </section>
 
     <section data-page="users" hidden>
-      <div class="head"><div><h1>Utenti</h1><p>Un utente corrisponde a un certificato client</p></div>
-        <a class="btn ghost" href="#home"><svg class="i"><use href="#i-plus"/></svg>Nuovo utente</a></div>
+      <div class="head"><div><h1>Users</h1><p>Each user is one client certificate</p></div>
+        <a class="btn ghost" href="#home"><svg class="i"><use href="#i-plus"/></svg>New user</a></div>
       <div class="card">
         <div class="tools">
-          <input id="uSearch" type="search" placeholder="Cerca utente o nota" aria-label="Cerca utente o nota">
-          <div class="seg" id="uFilter"><button data-f="" class="on">Tutti</button><button data-f="online">Online</button><button data-f="off">Disabilitati</button></div>
+          <input id="uSearch" type="search" placeholder="Search users or notes" aria-label="Search users or notes">
+          <div class="seg" id="uFilter"><button data-f="" class="on">All</button><button data-f="online">Online</button><button data-f="off">Disabled</button></div>
         </div>
         <div class="tw"><table>
-          <thead><tr><th>Stato</th><th>Utente</th><th>IP VPN</th><th>Da</th><th>Ricevuti / Inviati</th><th>Creato</th><th></th></tr></thead>
+          <thead><tr><th>Status</th><th>User</th><th>VPN IP</th><th>From</th><th>Received / Sent</th><th>Created</th><th></th></tr></thead>
           <tbody id="users"></tbody>
         </table></div>
       </div>
     </section>
 
     <section data-page="server" hidden>
-      <div class="head"><div><h1>Server</h1><p>Stato del servizio OpenVPN</p></div>
-        <button class="btn ghost" id="restartBtn"><svg class="i"><use href="#i-renew"/></svg>Riavvia OpenVPN</button></div>
+      <div class="head"><div><h1>Server</h1><p>OpenVPN service status</p></div>
+        <button class="btn ghost" id="restartBtn"><svg class="i"><use href="#i-renew"/></svg>Restart OpenVPN</button></div>
       <div class="card pad">
-        <div class="ch"><h2>Stato</h2><span id="srvState"></span></div>
+        <div class="ch"><h2>Status</h2><span id="srvState"></span></div>
         <dl class="kv">
-          <div><dt>Versione</dt><dd id="kVersion">—</dd></div>
-          <div><dt>Attivo da</dt><dd id="kUp">—</dd></div>
-          <div><dt>Client connessi</dt><dd id="kClients">—</dd></div>
-          <div><dt>Ascolto</dt><dd id="kListen">—</dd></div>
-          <div><dt>Rete VPN</dt><dd id="kSubnet">—</dd></div>
-          <div><dt>Traffico (ricevuti / inviati)</dt><dd id="kBytes">—</dd></div>
+          <div><dt>Version</dt><dd id="kVersion">—</dd></div>
+          <div><dt>Uptime</dt><dd id="kUp">—</dd></div>
+          <div><dt>Connected clients</dt><dd id="kClients">—</dd></div>
+          <div><dt>Listening on</dt><dd id="kListen">—</dd></div>
+          <div><dt>VPN network</dt><dd id="kSubnet">—</dd></div>
+          <div><dt>Traffic (received / sent)</dt><dd id="kBytes">—</dd></div>
         </dl>
       </div>
       <div class="card">
         <div class="pad ch" style="padding-bottom:12px"><h2>Log</h2>
-          <button class="btn ghost sm" id="logBtn"><svg class="i"><use href="#i-renew"/></svg>Aggiorna</button></div>
-        <pre class="log" id="log">Caricamento…</pre>
+          <button class="btn ghost sm" id="logBtn"><svg class="i"><use href="#i-renew"/></svg>Refresh</button></div>
+        <pre class="log" id="log">Loading…</pre>
       </div>
     </section>
 
     <section data-page="settings" hidden>
-      <div class="head"><div><h1>Impostazioni</h1><p>Indirizzo pubblico, instradamento e account</p></div></div>
+      <div class="head"><div><h1>Settings</h1><p>Public address, routing and account</p></div></div>
       <form id="net" class="stack">
         <div class="card pad">
-          <h2>Indirizzo pubblico</h2>
-          <p class="sub">Va nei profili scaricati da ora in poi. Con un nome DDNS l'IP può cambiare senza rifare i profili.</p>
+          <h2>Public address</h2>
+          <p class="sub">Used in profiles downloaded from now on. With a DDNS name, your IP can change without reissuing profiles.</p>
           <div class="fgrid">
-            <label class="f wide">Endpoint (DDNS o IP pubblico) <input name="endpoint_host" placeholder="casa.ddns.net" required></label>
-            <label class="f">Porta pubblica <small id="portHint"></small><input name="public_port" type="number" min="1" max="65535" required></label>
-            <label class="f">URL pubblico del pannello <small>per i link e i QR</small><input name="panel_url" placeholder="https://casa.ddns.net:8443"></label>
+            <label class="f wide">Endpoint (DDNS name or public IP) <input name="endpoint_host" placeholder="home.ddns.net" required></label>
+            <label class="f">Public port <small id="portHint"></small><input name="public_port" type="number" min="1" max="65535" required></label>
+            <label class="f">Public panel URL <small>used in links and QR codes</small><input name="panel_url" placeholder="https://home.ddns.net:8443"></label>
           </div>
         </div>
         <div class="card pad">
-          <h2>Instradamento e DNS</h2>
-          <p class="sub">Vale per tutti i client. Salvando, OpenVPN si riavvia e i client si riconnettono da soli.</p>
+          <h2>Routing and DNS</h2>
+          <p class="sub">Applies to every client. Saving restarts OpenVPN; clients reconnect on their own.</p>
           <div class="fgrid">
             <div class="radios wide">
-              <label class="c"><input type="radio" name="full_tunnel" value="1"><span>Tutto il traffico<small>Navigazione e servizi passano dalla VPN</small></span></label>
-              <label class="c"><input type="radio" name="full_tunnel" value="0"><span>Solo alcune reti<small>Ad esempio la LAN di casa; il resto esce dalla connessione dell'utente</small></span></label>
+              <label class="c"><input type="radio" name="full_tunnel" value="1"><span>All traffic<small>Browsing and services go through the VPN</small></span></label>
+              <label class="c"><input type="radio" name="full_tunnel" value="0"><span>Only some networks<small>For example your home LAN; everything else uses the user's own connection</small></span></label>
             </div>
-            <label class="f wide" id="routesRow">Reti instradate <small>CIDR separati da virgola</small><input name="routes" placeholder="192.168.1.0/24"></label>
-            <label class="f">DNS per i client <small>separati da virgola</small><input name="dns" placeholder="1.1.1.1"></label>
-            <label class="c" style="align-self:end"><input type="checkbox" name="client_to_client"><span>I client si vedono tra loro<small>client-to-client</small></span></label>
+            <label class="f wide" id="routesRow">Routed networks <small>comma-separated CIDRs</small><input name="routes" placeholder="192.168.1.0/24"></label>
+            <label class="f">DNS for clients <small>comma-separated</small><input name="dns" placeholder="1.1.1.1"></label>
+            <label class="c" style="align-self:end"><input type="checkbox" name="client_to_client"><span>Clients can reach each other<small>client-to-client</small></span></label>
           </div>
         </div>
-        <div><button class="btn">Salva impostazioni</button></div>
+        <div><button class="btn">Save settings</button></div>
       </form>
       <form id="pwForm" class="card pad" style="margin-top:16px">
-        <h2>Password amministratore</h2>
+        <h2>Admin password</h2>
         <div class="fgrid">
-          <label class="f">Password attuale <input id="pwCur" type="password" autocomplete="current-password" required></label>
-          <label class="f">Nuova password <small>almeno 10 caratteri</small><input id="pwNew" type="password" minlength="10" autocomplete="new-password" required></label>
+          <label class="f">Current password <input id="pwCur" type="password" autocomplete="current-password" required></label>
+          <label class="f">New password <small>at least 10 characters</small><input id="pwNew" type="password" minlength="10" autocomplete="new-password" required></label>
         </div>
         <div class="err" id="pwErr" style="margin-top:10px"></div>
-        <div style="margin-top:14px"><button class="btn ghost">Cambia password</button></div>
+        <div style="margin-top:14px"><button class="btn ghost">Change password</button></div>
       </form>
     </section>
   </main>
@@ -329,21 +329,21 @@
   <div class="dlg">
     <div><h3 id="sTitle"></h3><p class="sub" id="sExp"></p></div>
     <div class="result">
-      <img class="qr" id="sQr" alt="QR per l'attivazione">
+      <img class="qr" id="sQr" alt="Activation QR code">
       <div>
-        <b>Come connettersi</b>
+        <b>How to connect</b>
         <ol>
-          <li>Installa OpenVPN Connect sul telefono</li>
-          <li>Inquadra il QR con la fotocamera e apri il link</li>
-          <li>Scarica il profilo e aprilo con OpenVPN Connect</li>
-          <li>Tocca Import e poi Connect</li>
+          <li>Install OpenVPN Connect on the phone</li>
+          <li>Scan the QR code with the camera and open the link</li>
+          <li>Download the profile and open it with OpenVPN Connect</li>
+          <li>Tap Import, then Connect</li>
         </ol>
       </div>
     </div>
-    <div class="copy"><input id="sLink" readonly aria-label="Link di attivazione"><button type="button" class="btn ghost" id="sCopy">Copia link</button></div>
+    <div class="copy"><input id="sLink" readonly aria-label="Activation link"><button type="button" class="btn ghost" id="sCopy">Copy link</button></div>
     <div class="row">
-      <button type="button" class="btn ghost" id="sDownload"><svg class="i"><use href="#i-down"/></svg>Scarica .ovpn</button>
-      <button type="button" class="btn" data-close>Fatto</button>
+      <button type="button" class="btn ghost" id="sDownload"><svg class="i"><use href="#i-down"/></svg>Download .ovpn</button>
+      <button type="button" class="btn" data-close>Done</button>
     </div>
   </div>
 </dialog>
@@ -352,7 +352,7 @@
   <div class="dlg">
     <h3 id="cTitle"></h3>
     <p class="sub" id="cBody"></p>
-    <div class="row"><button type="button" class="btn ghost" id="cNo">Annulla</button><button type="button" class="btn danger" id="cYes"></button></div>
+    <div class="row"><button type="button" class="btn ghost" id="cNo">Cancel</button><button type="button" class="btn danger" id="cYes"></button></div>
   </div>
 </dialog>
 
@@ -365,7 +365,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&
 const bytes = (n) => { if (n == null) return "—"; const u=["B","KB","MB","GB","TB"]; let i=0; while (n>=1024 && i<u.length-1){n/=1024;i++;} return n.toFixed(i?1:0)+" "+u[i]; };
 const since = (ts) => { if (!ts) return "—"; const s = Math.max(0, Math.floor(Date.now()/1000) - ts);
   if (s < 60) return s+" s"; if (s < 3600) return Math.floor(s/60)+" min";
-  if (s < 86400) return Math.floor(s/3600)+" h " + Math.floor(s%3600/60) + " min"; return Math.floor(s/86400)+" g " + Math.floor(s%86400/3600) + " h"; };
+  if (s < 86400) return Math.floor(s/3600)+" h " + Math.floor(s%3600/60) + " min"; return Math.floor(s/86400)+" d " + Math.floor(s%86400/3600) + " h"; };
 
 let token = null, users = [], ov = null, lastShare = null, uFilter = "";
 try { token = sessionStorage.getItem("token"); } catch (e) {}
@@ -379,10 +379,10 @@ function toast(msg, bad) {
 async function api(method, path, body) {
   const r = await fetch(path, { method, headers: { "Content-Type": "application/json",
     ...(token ? { Authorization: "Bearer " + token } : {}) }, body: body ? JSON.stringify(body) : undefined });
-  if (r.status === 401 && path !== "/api/login") { showLogin(); throw new Error("Sessione scaduta"); }
+  if (r.status === 401 && path !== "/api/login") { showLogin(); throw new Error("Session expired"); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail
-    : Array.isArray(data.detail) ? data.detail.map(d => d.msg).join("; ") : "Errore " + r.status);
+    : Array.isArray(data.detail) ? data.detail.map(d => d.msg).join("; ") : "Error " + r.status);
   return data;
 }
 
@@ -395,7 +395,7 @@ function confirmDlg(title, body, yes) {
   });
 }
 
-// ------------------------------------------------------------- navigazione
+// ------------------------------------------------------------- navigation
 function route() {
   const view = (location.hash || "#home").slice(1);
   const page = document.querySelector(`[data-page="${CSS.escape(view)}"]`) ? view : "home";
@@ -417,7 +417,7 @@ async function showApp() {
   route(); loadSettings(); refresh();
 }
 
-// ------------------------------------------------------------- dati
+// ------------------------------------------------------------- data
 async function refresh() {
   if (!token) return;
   try {
@@ -428,40 +428,40 @@ async function refresh() {
 
 function render() {
   const s = ov.server, online = users.filter(u => u.online);
-  $("downWarn").hidden = s.running; $("downMsg").textContent = "OpenVPN non risponde" + (s.error ? `: ${s.error}` : ".");
+  $("downWarn").hidden = s.running; $("downMsg").textContent = "OpenVPN is not responding" + (s.error ? `: ${s.error}` : ".");
   $("sOnline").textContent = online.length;
   $("sUsers").textContent = users.length;
   $("sTraffic").textContent = s.running ? `${bytes(s.bytesin)} ↓  ${bytes(s.bytesout)} ↑` : "—";
   $("sEndpoint").textContent = $("sEndpoint").title = ov.endpoint;
-  $("homeSub").textContent = s.running ? `Server attivo da ${since(s.up_since)}` : "Server non attivo";
+  $("homeSub").textContent = s.running ? `Server up for ${since(s.up_since)}` : "Server is not running";
 
   $("live").innerHTML = online.length ? online.map(u => `<li>
       <span class="dot on" aria-hidden="true"></span>
-      <span class="who"><b>${esc(u.name)}</b><small>${esc(u.vpn_ip)} · da ${esc(u.real_address)} · ${since(u.connected_since)}</small></span>
-      <button class="btn ghost sm" data-act="kick" data-id="${u.id}" data-name="${esc(u.name)}">${icon("plug")}Disconnetti</button></li>`).join("")
-    : `<li class="empty" style="display:block">Quando un utente si collega, compare qui.</li>`;
+      <span class="who"><b>${esc(u.name)}</b><small>${esc(u.vpn_ip)} · from ${esc(u.real_address)} · ${since(u.connected_since)}</small></span>
+      <button class="btn ghost sm" data-act="kick" data-id="${u.id}" data-name="${esc(u.name)}">${icon("plug")}Disconnect</button></li>`).join("")
+    : `<li class="empty" style="display:block">Connected users show up here.</li>`;
 
   const q = $("uSearch").value.trim().toLowerCase();
   const list = users.filter(u => (uFilter === "online" ? u.online : uFilter === "off" ? !u.enabled : true)
     && (u.name.includes(q) || u.note.toLowerCase().includes(q)));
   $("users").innerHTML = list.length ? list.map(u => `<tr>
-      <td>${!u.enabled ? `<span class="tag bad">Disabilitato</span>` : `<span class="dot ${u.online ? "on" : ""}">${u.online ? "Online" : "Offline"}</span>`}</td>
+      <td>${!u.enabled ? `<span class="tag bad">Disabled</span>` : `<span class="dot ${u.online ? "on" : ""}">${u.online ? "Online" : "Offline"}</span>`}</td>
       <td><span class="two">${esc(u.name)}</span><small>${esc(u.note || "—")}</small></td>
       <td>${esc(u.vpn_ip || "—")}</td>
-      <td>${u.online ? `${esc(u.real_address)}<br><small>da ${since(u.connected_since)}</small>` : "—"}</td>
+      <td>${u.online ? `${esc(u.real_address)}<br><small>for ${since(u.connected_since)}</small>` : "—"}</td>
       <td>${u.online ? `${bytes(u.rx)} / ${bytes(u.tx)}` : "—"}</td>
-      <td>${esc(new Date(u.created_at).toLocaleDateString("it-IT"))}</td>
+      <td>${esc(new Date(u.created_at).toLocaleDateString())}</td>
       <td class="act">
         <button class="btn ghost sm" data-act="share" data-id="${u.id}" ${u.enabled ? "" : "disabled"}>${icon("qr")}QR</button>
-        <button class="icon-btn" title="Scarica .ovpn" aria-label="Scarica profilo di ${esc(u.name)}" data-act="download" data-id="${u.id}" data-name="${esc(u.name)}">${icon("down")}</button>
-        ${u.online ? `<button class="icon-btn" title="Disconnetti" aria-label="Disconnetti ${esc(u.name)}" data-act="kick" data-id="${u.id}" data-name="${esc(u.name)}">${icon("plug")}</button>` : ""}
-        <button class="icon-btn" title="${u.enabled ? "Disabilita" : "Abilita"}" aria-label="${u.enabled ? "Disabilita" : "Abilita"} ${esc(u.name)}" data-act="toggle" data-id="${u.id}" data-en="${u.enabled ? 1 : 0}" data-name="${esc(u.name)}">${icon(u.enabled ? "pause" : "play")}</button>
-        <button class="icon-btn" title="Rinnova certificato" aria-label="Rinnova certificato di ${esc(u.name)}" data-act="renew" data-id="${u.id}" data-name="${esc(u.name)}">${icon("renew")}</button>
-        <button class="icon-btn bad" title="Elimina" aria-label="Elimina ${esc(u.name)}" data-act="delete" data-id="${u.id}" data-name="${esc(u.name)}">${icon("trash")}</button>
+        <button class="icon-btn" title="Download .ovpn" aria-label="Download the profile of ${esc(u.name)}" data-act="download" data-id="${u.id}" data-name="${esc(u.name)}">${icon("down")}</button>
+        ${u.online ? `<button class="icon-btn" title="Disconnect" aria-label="Disconnect ${esc(u.name)}" data-act="kick" data-id="${u.id}" data-name="${esc(u.name)}">${icon("plug")}</button>` : ""}
+        <button class="icon-btn" title="${u.enabled ? "Disable" : "Enable"}" aria-label="${u.enabled ? "Disable" : "Enable"} ${esc(u.name)}" data-act="toggle" data-id="${u.id}" data-en="${u.enabled ? 1 : 0}" data-name="${esc(u.name)}">${icon(u.enabled ? "pause" : "play")}</button>
+        <button class="icon-btn" title="Renew certificate" aria-label="Renew the certificate of ${esc(u.name)}" data-act="renew" data-id="${u.id}" data-name="${esc(u.name)}">${icon("renew")}</button>
+        <button class="icon-btn bad" title="Delete" aria-label="Delete ${esc(u.name)}" data-act="delete" data-id="${u.id}" data-name="${esc(u.name)}">${icon("trash")}</button>
       </td></tr>`).join("")
-    : `<tr><td colspan="7" class="empty">${users.length ? "Nessun utente trovato" : "Nessun utente: creane uno dalla Panoramica"}</td></tr>`;
+    : `<tr><td colspan="7" class="empty">${users.length ? "No users found" : "No users yet: create one from the Overview"}</td></tr>`;
 
-  $("srvState").innerHTML = s.running ? `<span class="tag">In esecuzione</span>` : `<span class="tag bad">Non attivo</span>`;
+  $("srvState").innerHTML = s.running ? `<span class="tag">Running</span>` : `<span class="tag bad">Not running</span>`;
   $("kVersion").textContent = s.version || "—";
   $("kUp").textContent = s.up_since ? since(s.up_since) : "—";
   $("kClients").textContent = s.running ? s.nclients : "—";
@@ -482,27 +482,27 @@ async function loadLog() {
   try {
     const lines = await api("GET", "/api/server/log?lines=200");
     const box = $("log"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
-    box.innerHTML = lines.length ? lines.map(l => `<span class="t">${l.time ? new Date(l.time * 1000).toLocaleTimeString("it-IT") : ""}</span> `
-      + `<span class="${/[NF]/.test(l.flags) ? "e" : ""}">${esc(l.msg)}</span>`).join("\n") : "Nessuna riga di log.";
+    box.innerHTML = lines.length ? lines.map(l => `<span class="t">${l.time ? new Date(l.time * 1000).toLocaleTimeString() : ""}</span> `
+      + `<span class="${/[NF]/.test(l.flags) ? "e" : ""}">${esc(l.msg)}</span>`).join("\n") : "No log lines.";
     if (atEnd) box.scrollTop = box.scrollHeight;
   } catch (e) { $("log").textContent = e.message; }
 }
 $("logBtn").onclick = loadLog;
 
 $("restartBtn").onclick = async () => {
-  if (!await confirmDlg("Riavviare OpenVPN?", "I client connessi vengono disconnessi per qualche secondo e si ricollegano da soli.", "Riavvia")) return;
-  try { await api("POST", "/api/server/restart"); toast("OpenVPN riavviato"); setTimeout(() => { refresh(); loadLog(); }, 2500); }
+  if (!await confirmDlg("Restart OpenVPN?", "Connected clients drop for a few seconds and reconnect on their own.", "Restart")) return;
+  try { await api("POST", "/api/server/restart"); toast("OpenVPN restarted"); setTimeout(() => { refresh(); loadLog(); }, 2500); }
   catch (e) { toast(e.message, true); }
 };
 
-// ------------------------------------------------------------- impostazioni
+// ------------------------------------------------------------- settings
 function showSettings(v, server) {
   const f = $("net");
   for (const k of ["endpoint_host", "public_port", "panel_url", "dns", "routes"]) f.elements[k].value = v[k];
   f.querySelector(`input[name=full_tunnel][value="${v.full_tunnel ? 1 : 0}"]`).checked = true;
   f.elements.client_to_client.checked = v.client_to_client;
   $("routesRow").hidden = v.full_tunnel;
-  if (server) $("portHint").textContent = `il server ascolta su ${server.port}/${server.proto}`;
+  if (server) $("portHint").textContent = `the server listens on ${server.port}/${server.proto}`;
   const host = v.endpoint_host;
   $("endpointWarn").hidden = !(host.endsWith("example.com") || ["localhost", "127.0.0.1"].includes(host));
   $("epName").textContent = host;
@@ -529,7 +529,7 @@ $("net").onsubmit = async (ev) => {
   try {
     const r = await api("PUT", "/api/settings", body);
     showSettings(r.values);
-    toast(r.restarted ? "Salvato: OpenVPN riavviato" : "Impostazioni salvate");
+    toast(r.restarted ? "Saved: OpenVPN restarted" : "Settings saved");
     refresh();
   } catch (e) { toast(e.message, true); }
 };
@@ -538,18 +538,18 @@ $("pwForm").onsubmit = async (ev) => {
   ev.preventDefault(); $("pwErr").textContent = "";
   try {
     await api("POST", "/api/me/password", { current: $("pwCur").value, new: $("pwNew").value });
-    $("pwForm").reset(); toast("Password aggiornata");
+    $("pwForm").reset(); toast("Password updated");
   } catch (e) { $("pwErr").textContent = e.message; }
 };
 
-// ------------------------------------------------------------- utenti
+// ------------------------------------------------------------- users
 function showShare(r) {
   lastShare = r;
-  $("sTitle").textContent = `Profilo di ${r.user.name}`;
+  $("sTitle").textContent = `Profile for ${r.user.name}`;
   $("sQr").src = r.share.qr;
   $("sLink").value = r.share.url;
-  $("sExp").textContent = "Il link scade il " + new Date(r.share.expires_at * 1000).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) +
-    ". Puoi generarne uno nuovo quando vuoi.";
+  $("sExp").textContent = "This link expires on " + new Date(r.share.expires_at * 1000).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) +
+    ". You can generate a new one at any time.";
   $("dlgShare").showModal();
   refresh();
 }
@@ -566,7 +566,7 @@ $("create").onsubmit = async (ev) => {
 
 async function download(id, name) {
   const r = await fetch(`/api/users/${id}/profile`, { headers: { Authorization: "Bearer " + token } });
-  if (!r.ok) throw new Error("Download non riuscito");
+  if (!r.ok) throw new Error("Download failed");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(await r.blob()); a.download = `${name}.ovpn`; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -574,8 +574,8 @@ async function download(id, name) {
 
 $("sDownload").onclick = () => download(lastShare.user.id, lastShare.user.name).catch(e => toast(e.message, true));
 $("sCopy").onclick = async () => {
-  try { await navigator.clipboard.writeText(lastShare.share.url); toast("Link copiato"); }
-  catch (e) { $("sLink").select(); toast("Premi Ctrl+C per copiare"); }
+  try { await navigator.clipboard.writeText(lastShare.share.url); toast("Link copied"); }
+  catch (e) { $("sLink").select(); toast("Press Ctrl+C to copy"); }
 };
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => b.closest("dialog").close());
 
@@ -586,19 +586,19 @@ document.addEventListener("click", async (ev) => {
     if (act === "share") return showShare(await api("POST", `/api/users/${id}/share`));
     if (act === "download") return await download(id, name);
     if (act === "kick") {
-      await api("POST", `/api/users/${id}/kick`); toast(`${name} disconnesso`);
+      await api("POST", `/api/users/${id}/kick`); toast(`${name} disconnected`);
     } else if (act === "toggle") {
       const enable = b.dataset.en !== "1";
-      if (!enable && !await confirmDlg(`Disabilitare ${name}?`, "Viene disconnesso subito e non potrà ricollegarsi finché non lo riabiliti. I link condivisi smettono di funzionare.", "Disabilita")) return;
+      if (!enable && !await confirmDlg(`Disable ${name}?`, "They are disconnected right away and cannot reconnect until you enable them again. Shared links stop working.", "Disable")) return;
       await api("PATCH", `/api/users/${id}`, { enabled: enable });
     } else if (act === "renew") {
-      if (!await confirmDlg(`Rinnovare il certificato di ${name}?`, "Il profilo attuale smette di funzionare (es. dispositivo perso) e ne viene creato uno nuovo da condividere.", "Rinnova")) return;
+      if (!await confirmDlg(`Renew the certificate of ${name}?`, "The current profile stops working (e.g. lost device) and a new one is created to share.", "Renew")) return;
       return showShare(await api("POST", `/api/users/${id}/renew`));
     } else if (act === "delete") {
-      if (!await confirmDlg(`Eliminare ${name}?`, "Il certificato viene revocato e l'utente disconnesso. Non si può annullare.", "Elimina")) return;
+      if (!await confirmDlg(`Delete ${name}?`, "The certificate is revoked and the user disconnected. This cannot be undone.", "Delete")) return;
       await api("DELETE", `/api/users/${id}`);
     }
-    setTimeout(refresh, 600);  // il server aggiorna lo stato dopo la disconnessione
+    setTimeout(refresh, 600);  // the server updates its state after the disconnect
   } catch (e) { toast(e.message, true); }
 });
 
@@ -613,7 +613,7 @@ $("loginForm").onsubmit = async (ev) => {
 
 $("logout").onclick = async () => { try { await api("POST", "/api/logout"); } catch (e) {} showLogin(); };
 
-// niente aggiornamenti mentre una finestra e' aperta
+// no refresh while a dialog is open
 setInterval(() => {
   if (document.querySelector("dialog[open]")) return;
   refresh();

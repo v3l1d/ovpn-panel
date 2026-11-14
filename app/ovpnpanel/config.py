@@ -1,6 +1,6 @@
-"""Parametri d'installazione (scritti dall'installer in /etc/ovpn-panel/config.json).
+"""Install-time parameters (written by the installer to /etc/ovpn-panel/config.json).
 
-Cio' che l'admin puo' cambiare dal pannello sta invece nel database (settings.py).
+What the admin can change from the panel lives in the database instead (settings.py).
 """
 import json
 import os
@@ -11,7 +11,7 @@ DEFAULTS = {
     "token_ttl_hours": 12,
     "share_ttl_hours": 72,
     "public_host": "vpn.example.com",
-    # server OpenVPN
+    # OpenVPN server
     "port": 1194,
     "proto": "udp",
     "subnet": "10.9.0.0/24",

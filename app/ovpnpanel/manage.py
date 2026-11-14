@@ -1,4 +1,4 @@
-"""CLI di amministrazione: ovpn-panel <comando>"""
+"""Admin CLI: ovpn-panel <command>"""
 import argparse
 import getpass
 import os
@@ -10,28 +10,28 @@ from . import db, security, serverconf, settings
 
 
 def cmd_init(_args):
-    """Crea il database e scrive server.conf con le impostazioni correnti."""
+    """Creates the database and writes server.conf from the current settings."""
     db.init()
     with db.connect() as conn:
         serverconf.write(settings.load(conn))
-    print("Database inizializzato, server.conf scritto.")
+    print("Database initialized, server.conf written.")
 
 
 def _read_password():
-    # OVPN_PANEL_PASSWORD permette l'uso non interattivo (installer)
+    # OVPN_PANEL_PASSWORD allows non-interactive use (installer)
     pw = os.environ.get("OVPN_PANEL_PASSWORD")
     if pw is None:
         pw = getpass.getpass("Password: ")
-        if pw != getpass.getpass("Ripeti password: "):
-            sys.exit("Le password non coincidono")
+        if pw != getpass.getpass("Repeat password: "):
+            sys.exit("Passwords do not match")
     if len(pw) < 10:
-        sys.exit("La password deve avere almeno 10 caratteri")
+        sys.exit("The password must be at least 10 characters long")
     return pw
 
 
 def cmd_create_admin(args):
     if not re.match(r"^[a-z0-9][a-z0-9_.-]{1,31}$", args.username):
-        sys.exit("Username non valido (minuscole, cifre, _ . -)")
+        sys.exit("Invalid username (lowercase letters, digits, _ . -)")
     pw = _read_password()
     db.init()
     with db.connect() as conn:
@@ -39,8 +39,8 @@ def cmd_create_admin(args):
             conn.execute("INSERT INTO admins(username, pw_hash, created_at) VALUES (?, ?, ?)",
                          (args.username, security.hash_password(pw), db.now_iso()))
         except sqlite3.IntegrityError:
-            sys.exit("Amministratore gia' esistente (usa reset-password)")
-    print(f"Amministratore '{args.username}' creato.")
+            sys.exit("Admin already exists (use reset-password)")
+    print(f"Admin '{args.username}' created.")
 
 
 def cmd_reset_password(args):
@@ -49,10 +49,10 @@ def cmd_reset_password(args):
         cur = conn.execute("UPDATE admins SET pw_hash = ? WHERE username = ?",
                            (security.hash_password(pw), args.username))
         if cur.rowcount == 0:
-            sys.exit("Amministratore non trovato")
+            sys.exit("Admin not found")
         conn.execute("DELETE FROM tokens WHERE admin_id = (SELECT id FROM admins WHERE username = ?)",
                      (args.username,))
-    print("Password aggiornata.")
+    print("Password updated.")
 
 
 def main():

@@ -1,18 +1,18 @@
-# Ambiente di prova: vedi tests/run.sh
+# Test environment: see tests/run.sh
 name: ovpn-panel-test
 
 services:
   pve:
     build: ./pve-sim
     hostname: pve
-    privileged: true          # systemd + tun + iptables, come in un container LXC
+    privileged: true          # systemd + tun + iptables, as in an LXC container
     cgroup: host
     tmpfs: [/run, /run/lock]
     volumes:
       - ../dist:/dist:ro
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     ports:
-      - "9443:8443/tcp"       # pannello: https://localhost:9443
+      - "9443:8443/tcp"       # panel: https://localhost:9443
       - "1195:1194/udp"       # OpenVPN
 
   e2e:

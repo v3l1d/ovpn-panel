@@ -1,7 +1,7 @@
-"""Impostazioni modificabili dal pannello.
+"""Settings editable from the panel.
 
-- PROFILE_KEYS finiscono nei profili .ovpn: valgono per i profili scaricati da ora in poi.
-- SERVER_KEYS finiscono in server.conf: salvarle riavvia OpenVPN e valgono per tutti i client.
+- PROFILE_KEYS go into the .ovpn profiles: they apply to profiles downloaded from now on.
+- SERVER_KEYS go into server.conf: saving them restarts OpenVPN and they apply to every client.
 """
 import ipaddress
 import json
@@ -42,7 +42,7 @@ def _split(value: str):
 
 
 def validate(values: dict) -> dict:
-    """Normalizza i valori; solleva ValueError con un messaggio per l'utente."""
+    """Normalizes the values; raises ValueError with a user-facing message."""
     out = dict(values)
 
     host = values["endpoint_host"].strip().strip("[]")
@@ -50,12 +50,12 @@ def validate(values: dict) -> dict:
         ipaddress.ip_address(host)
     except ValueError:
         if not _HOST_RE.match(host):
-            raise ValueError("Endpoint: inserisci un nome host (es. casa.ddns.net) o un IP")
+            raise ValueError("Endpoint: enter a hostname (e.g. home.ddns.net) or an IP address")
     out["endpoint_host"] = host
 
     url = values["panel_url"].strip().rstrip("/")
     if url and not re.match(r"^https?://[^\s/]+(/[^\s]*)?$", url):
-        raise ValueError("URL del pannello: deve iniziare con https://")
+        raise ValueError("Panel URL: must start with https://")
     out["panel_url"] = url
 
     try:
@@ -66,9 +66,9 @@ def validate(values: dict) -> dict:
     try:
         nets = [ipaddress.IPv4Network(n, strict=False) for n in _split(values["routes"])]
     except ValueError as e:
-        raise ValueError(f"Reti instradate: {e}")
+        raise ValueError(f"Routed networks: {e}")
     if not values["full_tunnel"] and not nets:
-        raise ValueError("Reti instradate: indica almeno una rete, oppure scegli Tutto il traffico")
+        raise ValueError("Routed networks: enter at least one network, or choose All traffic")
     out["routes"] = ", ".join(str(n) for n in nets)
     return out
 

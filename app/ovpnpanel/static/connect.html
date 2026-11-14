@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Attiva la VPN</title>
+<title>Set up your VPN</title>
 <style>
   :root { color-scheme: light dark; --bg:#f4f6f8; --surface:#fff; --line:#e1e6eb; --text:#16202a; --muted:#5d6b78;
           --accent:#c2560c; --on-accent:#fff; --soft:#fdeedf; --danger:#c0392b; }
@@ -34,14 +34,14 @@
 <body>
 <main>
   <div class="logo" id="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></div>
-  <h1 id="title">Attiva la VPN</h1>
-  <p class="muted" id="sub">Caricamento…</p>
+  <h1 id="title">Set up your VPN</h1>
+  <p class="muted" id="sub">Loading…</p>
   <ol id="steps" hidden>
-    <li><span class="n">1</span><div><strong>Installa OpenVPN Connect</strong>
-      <a class="link" href="https://openvpn.net/client/" target="_blank" rel="noreferrer">Scarica l'app</a></div></li>
-    <li><span class="n">2</span><div><strong>Scarica il tuo profilo</strong><a class="btn" id="dl"></a></div></li>
-    <li><span class="n">3</span><div><strong>Importa e connettiti</strong>
-      <p class="muted">Apri il file con OpenVPN Connect, tocca Import e poi Connect. Su computer puoi trascinarlo nell'app.</p></div></li>
+    <li><span class="n">1</span><div><strong>Install OpenVPN Connect</strong>
+      <a class="link" href="https://openvpn.net/client/" target="_blank" rel="noreferrer">Get the app</a></div></li>
+    <li><span class="n">2</span><div><strong>Download your profile</strong><a class="btn" id="dl"></a></div></li>
+    <li><span class="n">3</span><div><strong>Import and connect</strong>
+      <p class="muted">Open the file with OpenVPN Connect, tap Import, then Connect. On a computer you can drag it into the app.</p></div></li>
   </ol>
   <footer id="foot" hidden><p class="muted" id="exp"></p></footer>
 </main>
@@ -52,16 +52,16 @@ const token = encodeURIComponent(location.pathname.split("/").filter(Boolean).po
   const r = await fetch(`/dl/${token}/info`, { cache: "no-store" }).catch(() => null);
   if (!r || !r.ok) {
     $("logo").classList.add("bad");
-    $("title").textContent = "Link non valido";
-    $("sub").textContent = "È scaduto oppure l'accesso è stato revocato. Chiedi un nuovo link all'amministratore.";
+    $("title").textContent = "This link is not valid";
+    $("sub").textContent = "It has expired or the access was revoked. Ask your administrator for a new link.";
     return;
   }
   const p = await r.json();
-  $("sub").textContent = `Profilo per ${p.name}`;
-  $("dl").href = `/dl/${token}`; $("dl").download = p.filename; $("dl").textContent = `Scarica ${p.filename}`;
+  $("sub").textContent = `Profile for ${p.name}`;
+  $("dl").href = `/dl/${token}`; $("dl").download = p.filename; $("dl").textContent = `Download ${p.filename}`;
   $("steps").hidden = false;
-  $("exp").textContent = "Link personale: non inoltrarlo. Scade il " +
-    new Date(p.expires_at * 1000).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) + ".";
+  $("exp").textContent = "This link is personal: do not forward it. It expires on " +
+    new Date(p.expires_at * 1000).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) + ".";
   $("foot").hidden = false;
 })();
 </script>

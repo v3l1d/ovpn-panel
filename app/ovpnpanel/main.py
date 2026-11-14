@@ -19,14 +19,14 @@ from .config import CONFIG
 
 log = logging.getLogger("ovpn-panel")
 
-# il nome finisce nel CN del certificato e nel nome del file .ovpn
+# the name ends up in the certificate CN and in the .ovpn file name
 NAME_RE = r"^[a-z0-9][a-z0-9_.-]{1,31}$"
 _static = os.path.join(os.path.dirname(__file__), "static")
 
 app = FastAPI(title="ovpn-panel", docs_url=None, redoc_url=None)
 bearer = HTTPBearer(auto_error=False)
 throttle = security.LoginThrottle()
-# serializza PKI, server.conf e riavvii
+# serializes PKI changes, server.conf writes and restarts
 pki_lock = threading.Lock()
 
 
@@ -37,10 +37,10 @@ def _startup():
 
 def _pki_error(e: Exception):
     if isinstance(e, subprocess.CalledProcessError):
-        log.error("comando fallito %s: %s", e.cmd, e.stderr)
+        log.error("command failed %s: %s", e.cmd, e.stderr)
     else:
-        log.exception("errore PKI/OpenVPN")
-    raise HTTPException(500, "Operazione non riuscita sul server OpenVPN (vedi journalctl -u ovpn-panel)")
+        log.exception("PKI/OpenVPN error")
+    raise HTTPException(500, "The operation failed on the OpenVPN server (see journalctl -u ovpn-panel)")
 
 
 def _clients() -> dict:
@@ -50,11 +50,11 @@ def _clients() -> dict:
         return {}
 
 
-# ---------------------------------------------------------------- autenticazione
+# ---------------------------------------------------------------- authentication
 
 def current_admin(creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer)):
     if creds is None:
-        raise HTTPException(401, "Token mancante")
+        raise HTTPException(401, "Missing token")
     with db.connect() as conn:
         row = conn.execute(
             """SELECT a.* FROM tokens t JOIN admins a ON a.id = t.admin_id
@@ -62,7 +62,7 @@ def current_admin(creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer
             (security.token_hash(creds.credentials), time.time()),
         ).fetchone()
     if row is None:
-        raise HTTPException(401, "Sessione scaduta o non valida")
+        raise HTTPException(401, "Session expired or invalid")
     return dict(row)
 
 
@@ -75,12 +75,12 @@ class LoginIn(BaseModel):
 def login(body: LoginIn, request: Request):
     ip = request.client.host if request.client else "?"
     if throttle.blocked(ip):
-        raise HTTPException(429, "Troppi tentativi, riprova tra qualche minuto")
+        raise HTTPException(429, "Too many attempts, try again in a few minutes")
     with db.connect() as conn:
         row = conn.execute("SELECT * FROM admins WHERE username = ?", (body.username.strip().lower(),)).fetchone()
         if row is None or not security.verify_password(body.password, row["pw_hash"]):
             throttle.fail(ip)
-            raise HTTPException(401, "Credenziali non valide")
+            raise HTTPException(401, "Invalid credentials")
         throttle.reset(ip)
         token = security.new_token()
         conn.execute("DELETE FROM tokens WHERE expires_at < ?", (time.time(),))
@@ -112,10 +112,10 @@ class PasswordIn(BaseModel):
 def change_password(body: PasswordIn, creds: HTTPAuthorizationCredentials = Depends(bearer),
                     admin=Depends(current_admin)):
     if not security.verify_password(body.current, admin["pw_hash"]):
-        raise HTTPException(400, "La password attuale non e' corretta")
+        raise HTTPException(400, "The current password is incorrect")
     with db.connect() as conn:
         conn.execute("UPDATE admins SET pw_hash = ? WHERE id = ?", (security.hash_password(body.new), admin["id"]))
-        # chiude le altre sessioni, non quella corrente
+        # sign out the other sessions, not the current one
         conn.execute("DELETE FROM tokens WHERE admin_id = ? AND token_hash != ?",
                      (admin["id"], security.token_hash(creds.credentials)))
     return {"ok": True}
@@ -141,10 +141,10 @@ def overview(_=Depends(current_admin)):
 
 
 def _journal_log(lines: int):
-    """Log di OpenVPN dal journal (storia completa, a differenza del buffer del management)."""
+    """OpenVPN log from the journal (full history, unlike the management buffer)."""
     try:
         r = subprocess.run(
-            # margine ampio: le righe MANAGEMENT vengono scartate dopo la lettura
+            # generous margin: MANAGEMENT lines are dropped after reading
             ["journalctl", "-u", "openvpn-server@server", "-n", str(min(lines * 20, 20000)),
              "-o", "json", "--no-pager"],
             capture_output=True, text=True, timeout=10,
@@ -173,7 +173,7 @@ def server_log(lines: int = 150, _=Depends(current_admin)):
     if entries is not None:
         return entries
     try:
-        # senza journald (es. installazione fuori da systemd): buffer del management
+        # without journald (e.g. installed outside systemd): management buffer
         return [e for e in mgmt.log(lines) if not e["msg"].startswith("MANAGEMENT:")]
     except mgmt.MgmtError as e:
         raise HTTPException(503, str(e))
@@ -189,7 +189,7 @@ def server_restart(_=Depends(current_admin)):
     return {"ok": True}
 
 
-# ---------------------------------------------------------------- utenti VPN
+# ---------------------------------------------------------------- VPN users
 
 def _user_out(row, clients) -> dict:
     d = {k: row[k] for k in ("id", "name", "note", "created_at")}
@@ -203,7 +203,7 @@ def _user_out(row, clients) -> dict:
 def _get_user(conn, user_id):
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     if row is None:
-        raise HTTPException(404, "Utente non trovato")
+        raise HTTPException(404, "User not found")
     return row
 
 
@@ -239,7 +239,7 @@ def create_user(body: UserIn, request: Request, _=Depends(current_admin)):
             cur = conn.execute("INSERT INTO users(name, cn, note, created_at) VALUES (?, ?, ?, ?)",
                                (body.name, cn, body.note.strip(), db.now_iso()))
         except sqlite3.IntegrityError:
-            raise HTTPException(409, "Esiste gia' un utente con questo nome")
+            raise HTTPException(409, "A user with this name already exists")
         try:
             pki.issue(cn)
         except Exception as e:
@@ -253,7 +253,7 @@ def share_user(user_id: int, request: Request, _=Depends(current_admin)):
     with db.connect() as conn:
         user = _get_user(conn, user_id)
         if not user["enabled"]:
-            raise HTTPException(409, "Utente disabilitato: riabilitalo prima di condividere il profilo")
+            raise HTTPException(409, "User is disabled: enable it before sharing the profile")
         return {"user": _user_out(user, _clients()), "share": _share(conn, user, request)}
 
 
@@ -285,7 +285,7 @@ def update_user(user_id: int, body: UserPatch, _=Depends(current_admin)):
                     conn.execute("DELETE FROM shares WHERE user_id = ?", (user_id,))
                     mgmt.kill(user["cn"])
             except mgmt.MgmtError:
-                pass  # OpenVPN fermo: il blocco vale comunque alla prossima connessione
+                pass  # OpenVPN is down: the block still applies on the next connection
             except Exception as e:
                 _pki_error(e)
     return {"ok": True}
@@ -304,7 +304,7 @@ def kick_user(user_id: int, _=Depends(current_admin)):
 
 @app.post("/api/users/{user_id}/renew")
 def renew_user(user_id: int, request: Request, _=Depends(current_admin)):
-    """Revoca il certificato e ne emette uno nuovo (es. telefono perso)."""
+    """Revokes the certificate and issues a new one (e.g. lost phone)."""
     with pki_lock, db.connect() as conn:
         user = _get_user(conn, user_id)
         cn = pki.new_cn(user["name"])
@@ -337,7 +337,7 @@ def delete_user(user_id: int, _=Depends(current_admin)):
     return {"ok": True}
 
 
-# ---------------------------------------------------------------- impostazioni
+# ---------------------------------------------------------------- settings
 
 class SettingsIn(BaseModel):
     endpoint_host: str = Field(min_length=1, max_length=253)
@@ -376,7 +376,7 @@ def put_settings(body: SettingsIn, _=Depends(current_admin)):
     return {"values": new, "restarted": restarted}
 
 
-# ---------------------------------------------------------------- pagina pubblica per l'utente
+# ---------------------------------------------------------------- public page for the end user
 
 def _shared_user(token: str):
     with db.connect() as conn:
@@ -389,7 +389,7 @@ def _shared_user(token: str):
 
 @app.get("/p/{token}")
 def activation_page(token: str):
-    """Se il link non e' valido lo dice la pagina stessa."""
+    """If the link is not valid, the page itself says so."""
     return FileResponse(os.path.join(_static, "connect.html"),
                         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
@@ -398,7 +398,7 @@ def activation_page(token: str):
 def shared_info(token: str):
     user = _shared_user(token)
     if user is None:
-        raise HTTPException(404, "Link scaduto o non valido")
+        raise HTTPException(404, "Link expired or invalid")
     return {"name": user["name"], "filename": f"{user['name']}.ovpn", "expires_at": user["expires_at"]}
 
 
@@ -406,7 +406,7 @@ def shared_info(token: str):
 def shared_download(token: str):
     user = _shared_user(token)
     if user is None:
-        return PlainTextResponse("Link scaduto o non valido. Chiedi un nuovo link all'amministratore.",
+        return PlainTextResponse("This link has expired or is not valid. Ask your administrator for a new one.",
                                  status_code=404)
     with db.connect() as conn:
         content = pki.profile(user["cn"], settings.load(conn))

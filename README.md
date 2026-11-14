@@ -1,116 +1,121 @@
 # OpenVPN Panel
 
-Dashboard web per gestire un server OpenVPN, con uno script che su **Proxmox VE** crea e configura
-da solo il container LXC.
+A small web dashboard to run an OpenVPN server, plus a one-command installer that creates a ready-to-use
+LXC container on **Proxmox VE**.
 
-- **Utenti**: crea con un clic, QR e link di attivazione per il telefono, download `.ovpn`,
-  disabilita/riabilita, rinnova il certificato (dispositivo perso), elimina.
-- **Connessi in tempo reale**: IP VPN, indirizzo di provenienza, traffico, disconnessione forzata.
-- **Server**: stato, versione, uptime, traffico, log, riavvio.
-- **Impostazioni**: endpoint pubblico/DDNS, porta pubblica, tutto il traffico o solo alcune reti, DNS, client-to-client.
+Create a user, show the QR code, and the user is connected a minute later from their phone.
 
-Il pannello parla con OpenVPN tramite la sua **interfaccia di management** (socket unix): legge i client
-connessi, i log e lo stato, e disconnette i client senza toccare i file di OpenVPN.
+## Features
 
-## Installazione su Proxmox
+- **One-command install on Proxmox**: creates an unprivileged Debian 12 container with OpenVPN, the PKI,
+  NAT and the panel, all as systemd services.
+- **Users**
+  - one click creates a client certificate;
+  - a QR code opens an activation page where the user downloads the profile for OpenVPN Connect;
+  - `.ovpn` download, disable / enable, renew the certificate (lost device), delete.
+- **Live view**: who is connected, from where, with which VPN IP and how much traffic; force a disconnect.
+- **Server**: status, version, uptime, traffic and logs; restart from the browser.
+- **Settings**: public endpoint (DDNS name or IP), public port, full or split tunnel, DNS, client-to-client.
+- **Modern defaults**: EC certificates, `tls-crypt`, AES-256-GCM / ChaCha20-Poly1305, CRL-based revocation.
+- **Light and dark theme**, usable from a phone.
 
-1. Crea l'installer, che è un unico file con l'applicazione incorporata:
-   ```bash
-   python tools/build.py        # -> dist/ovpn-panel-proxmox.sh
-   ```
-2. Copialo sul nodo Proxmox (es. `scp dist/ovpn-panel-proxmox.sh root@proxmox:`) e dalla **Shell** del nodo:
-   ```bash
-   bash ovpn-panel-proxmox.sh
-   ```
-   Ti chiede il DDNS o l'IP pubblico, mostra il riepilogo e chiede conferma. Senza domande:
-   ```bash
-   bash ovpn-panel-proxmox.sh --yes --public-host casa.ddns.net
-   ```
-3. Alla fine stampa indirizzo del pannello, utente e password. La password resta anche nel container:
-   `pct exec <ID> -- cat /root/ovpn-panel-credentials.txt`.
-4. Sul router inoltra **1194/udp** verso l'IP del container.
+The panel talks to OpenVPN through its **management interface**. It reads clients, state and statistics,
+and disconnects clients live without editing OpenVPN's files. It also generates `server.conf` from the settings.
 
-Cosa fa lo script:
-- sceglie il primo ID libero e lo storage `local-lvm`, se c'è;
-- scarica l'ultimo template Debian 12;
-- crea un container **unprivileged** (1 core, 512 MB di RAM, 4 GB di disco, DHCP su `vmbr0`, avvio automatico) e gli dà accesso a `/dev/net/tun`;
-- dentro il container installa OpenVPN, la PKI (easy-rsa, chiavi EC, `tls-crypt`), il NAT e il pannello come servizi systemd.
+## Quick start
 
-Tutto si può cambiare con le opzioni, elencate da `bash ovpn-panel-proxmox.sh --help`:
-`--ctid --hostname --storage --bridge --ip 192.168.1.50/24 --gw 192.168.1.1 --disk --memory --cores --port --proto tcp --panel-port --ssh-key`.
-
-Se qualcosa va storto, il container resta in piedi per poterlo esaminare (`pct enter <ID>`).
-Lo script stampa anche il comando per eliminarlo.
-
-### Su un container o una VM Debian 12 già esistente
+In the **Shell** of your Proxmox node (*Datacenter → your node → Shell*):
 
 ```bash
-PUBLIC_HOST=casa.ddns.net bash app/install.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/OWNER/ovpn-panel/main/proxmox/create-ct.sh)"
 ```
 
-Rilanciarlo aggiorna l'applicazione, senza toccare PKI, utenti e impostazioni.
+The script:
+1. asks for your DDNS name or public IP;
+2. shows what it will create and asks for confirmation;
+3. prints the panel address, user name and password at the end.
 
-## Uso
+Then forward **1194/udp** on your router to the container IP.
 
-**Panoramica → Nuovo utente**: inserisci il nome e compare il QR. L'utente lo inquadra con la fotocamera,
-apre la pagina di attivazione, scarica il profilo e lo apre con **OpenVPN Connect**.
-Il link vale 72 ore, ma se ne genera uno nuovo quando serve: il profilo si ricostruisce dalla PKI.
+The [installation guide](docs/INSTALL.md) covers the details:
+- every installer option, offline installs and installs on an existing Debian 12 system;
+- upgrades, backups and uninstalling;
+- troubleshooting.
 
-| Azione | Effetto |
-|---|---|
-| Disconnetti | chiude la sessione; il client si ricollega da solo |
-| Disabilita | disconnette e blocca le riconnessioni, invalida i link |
-| Rinnova | revoca il certificato e ne emette uno nuovo (dispositivo perso) |
-| Elimina | revoca il certificato e cancella l'utente |
+## Requirements
 
-Impostazioni:
-- **Indirizzo pubblico** (endpoint, porta, URL del pannello): vale per i profili scaricati da quel momento in poi.
-- **Instradamento e DNS**: vale per tutti i client. Salvando, OpenVPN si riavvia e i client si riconnettono da soli.
+- Proxmox VE 7 or later (any node with Internet access), or any Debian 12 system with systemd for a manual install
+- A public IPv4 address, or a DDNS name pointing to it, and the ability to forward one UDP port on your router
+- Clients: [OpenVPN Connect](https://openvpn.net/client/) or any OpenVPN 2.5+ client
 
-Il pannello usa un certificato self-signed: browser e telefoni mostrano un avviso. Non serve esporlo su
-Internet. Se vuoi che gli utenti aprano i QR da fuori casa, mettilo dietro un reverse proxy con un
-certificato valido (es. Let's Encrypt sul DDNS) e indica quell'URL in Impostazioni.
+## How it works
 
-### Comandi nel container
-
-```bash
-ovpn-panel reset-password admin                 # password dimenticata
-journalctl -u ovpn-panel -u openvpn-server@server -f
+```
+                 Proxmox VE node
+┌────────────────────────────────────────────────────┐
+│  LXC container (Debian 12, unprivileged)           │
+│                                                    │
+│   ovpn-panel (FastAPI, HTTPS :8443)                │
+│     ├─ management socket ─► openvpn-server@server  │◄── 1194/udp ── clients
+│     ├─ easy-rsa PKI (issue / revoke / CRL)         │
+│     └─ SQLite: admins, users, settings             │
+│   iptables NAT 10.9.0.0/24 ─► LAN / Internet       │
+└────────────────────────────────────────────────────┘
 ```
 
-## Sviluppo e test
+- **One user = one client certificate.** Profiles are rebuilt from the PKI on demand, so a new download
+  link can be generated at any time.
+- **Activation links** are random, expire after 72 hours and stop working as soon as the user is disabled,
+  renewed or deleted.
+- **Settings take effect in two ways.** Routing and DNS changes rewrite `server.conf` and restart OpenVPN:
+  clients reconnect on their own. Endpoint and port changes only affect profiles downloaded afterwards.
 
-`tests/run.sh` prova tutto senza un Proxmox vero:
+## Security notes
 
-1. lancia `dist/ovpn-panel-proxmox.sh` dentro un **nodo Proxmox simulato** (Debian 12 con systemd;
-   `pct`, `pveam`, `pvesh` e `pvesm` finti, con `pct exec` che esegue davvero l'installer);
-2. collega un **client OpenVPN reale** e prova creazione, attivazione, connessione, NAT, disconnessione,
-   disabilitazione, rinnovo, impostazioni del server e riavvio;
-3. riavvia il container e controlla che i servizi ripartano da soli.
+- **Do not expose the panel to the Internet.** Only the OpenVPN port needs forwarding; the panel works fine
+  from your LAN. If users must open activation links from outside, put the panel behind a reverse proxy
+  with a valid certificate. See [Exposing the panel](docs/INSTALL.md#exposing-the-panel-optional).
+- **Logins:** admin passwords are hashed with scrypt, sessions expire after 12 hours, and an IP is locked
+  out for 10 minutes after 5 failed logins.
+- **Self-signed certificate:** browsers show a warning the first time.
+- **Profiles contain private keys.** Treat activation links like passwords: they are personal and short-lived.
+
+## Development
+
+The whole installer can be tested without a Proxmox node:
 
 ```bash
 bash tests/run.sh
 ```
 
-Alla fine il pannello di prova resta su <https://localhost:9443>.
+`tests/run.sh` does three things:
 
-Il test non copre la parte specifica di Proxmox: comandi `pct` veri, template, storage e permessi LXC.
-Quella va provata su un nodo reale.
+1. **Simulated Proxmox node.** Builds the installer and runs it on a Debian 12 container with systemd,
+   where `pct`, `pveam`, `pvesh` and `pvesm` are simulated. `pct exec` runs commands for real, so
+   `install.sh` really installs everything.
+2. **Real OpenVPN client.** Connects one and checks:
+   - user creation, the activation page and the tunnel;
+   - NAT, disconnecting, disabling and renewing users;
+   - the split-tunnel settings and restarts.
+3. **Restart.** Restarts the node and checks that every service comes back.
 
-## Struttura
+It needs Docker. The test panel stays available at <https://localhost:9443> afterwards.
+
+The simulation does not cover the Proxmox-specific parts: real `pct` behavior, templates, storage and
+LXC permissions.
 
 ```
 app/
-  install.sh            installazione dentro il container (Debian 12)
+  install.sh            installer for Debian 12 (runs inside the container)
   ovpnpanel/
-    main.py             API e pagine
-    mgmt.py             client dell'interfaccia di management di OpenVPN
-    pki.py              certificati (easy-rsa), revoche, profili .ovpn
-    serverconf.py       server.conf generato dalle impostazioni
-    settings.py         impostazioni modificabili dal pannello
+    main.py             HTTP API and pages
+    mgmt.py             OpenVPN management interface client
+    pki.py              certificates (easy-rsa), revocation, .ovpn profiles
+    serverconf.py       server.conf generated from the settings
+    settings.py         settings editable from the panel
     manage.py           CLI: init, create-admin, reset-password
-    static/             pannello e pagina di attivazione
-proxmox/create-ct.sh    script per il nodo Proxmox
-tools/build.py          crea dist/ovpn-panel-proxmox.sh con l'app incorporata
-tests/                  nodo Proxmox simulato e test end-to-end
+    static/             dashboard and activation page
+proxmox/create-ct.sh    Proxmox installer (create or --update a container)
+tools/build.py          builds dist/ovpn-panel-proxmox.sh with the app embedded (offline installs)
+tests/                  simulated Proxmox node and end-to-end tests
 ```
