@@ -1,0 +1,7 @@
+# Direct dependencies. requirements.lock (with hashes) is generated from this file:
+#   docker run --rm -v "$PWD/app:/w" -w /w python:3.11-slim sh -c \
+#     "pip install -q pip-tools && pip-compile --quiet --generate-hashes -o requirements.lock requirements.in"
+fastapi
+uvicorn
+segno
+cryptography

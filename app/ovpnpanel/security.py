@@ -2,8 +2,6 @@ import base64
 import hashlib
 import hmac
 import secrets
-import time
-from collections import defaultdict, deque
 
 _N, _R, _P = 2**14, 8, 1
 
@@ -29,33 +27,13 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
+# Verified when the user does not exist, so that response times do not reveal valid user names.
+DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
+
+
 def new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-class LoginThrottle:
-    """Blocks an IP after `limit` failed attempts within `window` seconds."""
-
-    def __init__(self, limit=5, window=600):
-        self.limit, self.window = limit, window
-        self.failures = defaultdict(deque)
-
-    def _prune(self, key):
-        q = self.failures[key]
-        cutoff = time.monotonic() - self.window
-        while q and q[0] < cutoff:
-            q.popleft()
-        return q
-
-    def blocked(self, key) -> bool:
-        return len(self._prune(key)) >= self.limit
-
-    def fail(self, key):
-        self._prune(key).append(time.monotonic())
-
-    def reset(self, key):
-        self.failures.pop(key, None)

@@ -7,7 +7,7 @@ reopened when OpenVPN restarts.
 import socket
 import threading
 
-from .config import CONFIG
+from ..config import CONFIG
 
 TIMEOUT = 3
 _lock = threading.Lock()
@@ -27,6 +27,12 @@ def _close():
             except OSError:
                 pass
     _conn = None
+
+
+def reset():
+    """Drops the connection (e.g. after OpenVPN restarted): the next command reconnects."""
+    with _lock:
+        _close()
 
 
 def _open():

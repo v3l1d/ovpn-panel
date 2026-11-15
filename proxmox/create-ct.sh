@@ -4,8 +4,12 @@
 set -euo pipefail
 
 # Where the application is downloaded from when this script runs on its own (e.g. through curl).
+# A release pins a tag and the hash of the application files (tools/release.py fills the two lines
+# below): the download is refused if the files do not match. A development checkout leaves them empty.
 REPO_URL="${OVPN_PANEL_REPO_URL:-https://github.com/v3l1d/ovpn-panel}"
-REPO_REF="${OVPN_PANEL_REF:-main}"
+PINNED_REF="main"
+PINNED_TREE_SHA256=""
+REPO_REF="${OVPN_PANEL_REF:-$PINNED_REF}"
 
 CTID="${CTID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-ovpn-panel}"
@@ -21,6 +25,7 @@ CORES="${CORES:-1}"
 OVPN_PORT="${OVPN_PORT:-1194}"
 OVPN_PROTO="${OVPN_PROTO:-udp}"
 PANEL_PORT="${PANEL_PORT:-8443}"
+PANEL_ALLOW="${PANEL_ALLOW:-}"
 SSH_KEY="${SSH_KEY:-}"
 YES="${YES:-0}"
 UPDATE_CTID=""
@@ -50,8 +55,12 @@ Every option can also be given as an environment variable (e.g. CTID=120).
   --port N              OpenVPN port                          (default: 1194)
   --proto udp|tcp       OpenVPN protocol                      (default: udp)
   --panel-port N        panel HTTPS port                      (default: 8443)
+  --panel-allow CIDRS   networks that may reach the panel, comma-separated
+                                                              (default: the container's local network only)
   --ssh-key FILE        public key for root SSH access
   --repo URL            repository to download the app from   (default: OVPN_PANEL_REPO_URL)
+  --ref REF             tag or branch to download             (default: the release this script belongs to;
+                        any other value skips the integrity check)
   --update ID           upgrade the panel in an existing container instead of creating one
                         (users, certificates and settings are kept)
   -y, --yes             do not ask for confirmation
@@ -76,8 +85,10 @@ while [[ $# -gt 0 ]]; do
     --port) OVPN_PORT="$2"; shift 2 ;;
     --proto) OVPN_PROTO="$2"; shift 2 ;;
     --panel-port) PANEL_PORT="$2"; shift 2 ;;
+    --panel-allow) PANEL_ALLOW="$2"; shift 2 ;;
     --ssh-key) SSH_KEY="$2"; shift 2 ;;
     --repo) REPO_URL="$2"; shift 2 ;;
+    --ref) REPO_REF="$2"; shift 2 ;;
     --update) UPDATE_CTID="$2"; shift 2 ;;
     -y|--yes) YES=1; shift ;;
     -h|--help) usage ;;
@@ -126,11 +137,26 @@ else
   step "Downloading ovpn-panel ($REPO_URL, $REPO_REF)"
   mkdir "$WORK/src"
   # GitHub and Gitea/Forgejo use different archive paths
-  for url in "$REPO_URL/archive/refs/heads/$REPO_REF.tar.gz" "$REPO_URL/archive/$REPO_REF.tar.gz"; do
+  for url in "$REPO_URL/archive/refs/tags/$REPO_REF.tar.gz" "$REPO_URL/archive/refs/heads/$REPO_REF.tar.gz" \
+             "$REPO_URL/archive/$REPO_REF.tar.gz"; do
     curl -fsSL "$url" 2>/dev/null | tar xz -C "$WORK/src" 2>/dev/null && break
   done
   app_dir="$(find "$WORK/src" -mindepth 2 -maxdepth 2 -type d -name app | head -n1)"
   [[ -n $app_dir && -f $app_dir/install.sh ]] || die "could not download the application from $REPO_URL (use --repo)"
+
+  # The hash covers the content of every file, not the archive: it does not depend on how the
+  # hosting service packs the download.
+  tree_hash() { ( cd "$1" && find app -type f ! -path '*/__pycache__/*' ! -name '*.pyc' -print0 \
+                  | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 ); }
+  if [[ -n $PINNED_TREE_SHA256 && $REPO_REF == "$PINNED_REF" ]]; then
+    actual="$(tree_hash "$(dirname "$app_dir")")"
+    [[ $actual == "$PINNED_TREE_SHA256" ]] \
+      || die "integrity check failed: the downloaded files do not match this release (expected $PINNED_TREE_SHA256, got $actual)"
+    echo "  integrity verified ($PINNED_REF, files sha256 ${actual:0:16}...)"
+  else
+    printf '\033[33mWarning: integrity not verified (%s)\033[0m\n' \
+      "$([[ -z $PINNED_TREE_SHA256 ]] && echo 'development version' || echo "custom ref $REPO_REF")" >&2
+  fi
   tar czf "$WORK/app.tgz" -C "$(dirname "$app_dir")" app
 fi
 
@@ -212,7 +238,8 @@ echo "  Container IP: $CT_IP"
 
 step "Installing OpenVPN and the panel"
 install_app "$CTID" \
-  PUBLIC_HOST="$PUBLIC_HOST" OVPN_PORT="$OVPN_PORT" OVPN_PROTO="$OVPN_PROTO" PANEL_PORT="$PANEL_PORT"
+  PUBLIC_HOST="$PUBLIC_HOST" OVPN_PORT="$OVPN_PORT" OVPN_PROTO="$OVPN_PROTO" PANEL_PORT="$PANEL_PORT" \
+  PANEL_ALLOW="$PANEL_ALLOW"
 
 CREDS="$(pct exec "$CTID" -- cat /root/ovpn-panel-credentials.txt)"
 ADMIN_USER="$(sed -n 's/^username=//p' <<<"$CREDS")"
@@ -229,7 +256,11 @@ $(bold "Done. Container $CTID is ready.")
                (also stored in the container: pct exec $CTID -- cat /root/ovpn-panel-credentials.txt)
 
   On your router, forward $OVPN_PORT/$OVPN_PROTO to $CT_IP.
-  The panel does not need to be exposed to the Internet: reaching it from your LAN is enough.
+  Do not forward the panel port: the container's firewall only lets your local network reach it
+  (VPN clients and the Internet are refused). To allow more networks: pct exec $CTID -- ovpn-panel allow-panel CIDR[,CIDR]
+
+  HTTPS uses a private CA. Install https://$CT_IP:$PANEL_PORT/panel-ca.crt as a trusted root to remove the
+  browser warning, after checking the fingerprint printed by the installer above.
 $( [[ -n $PUBLIC_HOST ]] || echo "
   No public endpoint set: open Settings in the panel and set it before creating users." )
 EOF

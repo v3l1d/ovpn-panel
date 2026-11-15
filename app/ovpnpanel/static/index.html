@@ -110,6 +110,9 @@
   .tag { display:inline-block; padding:1px 8px; font-size:12px; font-weight:600; border-radius:999px; color:var(--ok); background:var(--ok-soft); }
   .tag.off { color:var(--muted); background:var(--surface-2); }
   .tag.bad { color:var(--danger); background:var(--danger-soft); }
+  .tag.warn { color:var(--warn); background:var(--warn-soft); }
+  td.wrapok { white-space:normal; min-width:200px; }
+  .fp { font:12px/1.5 var(--mono); overflow-wrap:anywhere; color:var(--muted); }
   .dot { display:inline-flex; align-items:center; gap:7px; }
   .dot::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--line-strong); }
   .dot.on::before { background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); }
@@ -184,6 +187,7 @@
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></symbol>
   <symbol id="i-out" viewBox="0 0 24 24"><path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
 </svg>
 
 <div id="login">
@@ -207,6 +211,7 @@
       <a href="#home" data-view="home"><svg class="i"><use href="#i-home"/></svg>Overview</a>
       <a href="#users" data-view="users"><svg class="i"><use href="#i-users"/></svg>Users</a>
       <a href="#server" data-view="server"><svg class="i"><use href="#i-server"/></svg>Server</a>
+      <a href="#audit" data-view="audit"><svg class="i"><use href="#i-list"/></svg>Audit log</a>
       <a href="#settings" data-view="settings"><svg class="i"><use href="#i-gear"/></svg>Settings</a>
     </nav>
     <div class="me"><span id="who"></span>
@@ -221,6 +226,9 @@
       <svg class="i"><use href="#i-alert"/></svg>
       <span>Set the endpoint <b id="epName"></b> to your DDNS name or public IP, otherwise clients cannot connect.</span>
       <a href="#settings">Set it</a>
+    </div>
+    <div class="banner" id="certWarn" hidden>
+      <svg class="i"><use href="#i-alert"/></svg><span id="certMsg"></span><a href="#server">Details</a>
     </div>
 
     <section data-page="home" hidden>
@@ -258,7 +266,7 @@
           <div class="seg" id="uFilter"><button data-f="" class="on">All</button><button data-f="online">Online</button><button data-f="off">Disabled</button></div>
         </div>
         <div class="tw"><table>
-          <thead><tr><th>Status</th><th>User</th><th>VPN IP</th><th>From</th><th>Received / Sent</th><th>Created</th><th></th></tr></thead>
+          <thead><tr><th>Status</th><th>User</th><th>VPN IP</th><th>From</th><th>Received / Sent</th><th>Created</th><th>Certificate expires</th><th></th></tr></thead>
           <tbody id="users"></tbody>
         </table></div>
       </div>
@@ -277,6 +285,19 @@
           <div><dt>VPN network</dt><dd id="kSubnet">—</dd></div>
           <div><dt>Traffic (received / sent)</dt><dd id="kBytes">—</dd></div>
         </dl>
+      </div>
+      <div class="card">
+        <div class="pad" style="padding-bottom:4px"><h2>Certificates and HTTPS</h2>
+          <p class="sub">Everything the service depends on, with its expiry date. The CRL and the panel certificate renew themselves.</p></div>
+        <div class="tw"><table>
+          <thead><tr><th>Certificate</th><th>Expires</th><th>Left</th></tr></thead>
+          <tbody id="pkiList"></tbody>
+        </table></div>
+        <div class="pad" style="padding-top:4px">
+          <p class="sub">Panel CA SHA-256 fingerprint (check it when you install the CA on a device):</p>
+          <p class="fp" id="caFp">—</p>
+          <p class="sub" style="margin-top:8px"><a href="/panel-ca.crt">Download the panel CA certificate</a> and install it as a trusted root to remove the browser warning.</p>
+        </div>
       </div>
       <div class="card">
         <div class="pad ch" style="padding-bottom:12px"><h2>Log</h2>
@@ -310,6 +331,15 @@
             <label class="c" style="align-self:end"><input type="checkbox" name="client_to_client"><span>Clients can reach each other<small>client-to-client</small></span></label>
           </div>
         </div>
+        <div class="card pad">
+          <h2>Certificates and activation links</h2>
+          <p class="sub">Apply to certificates and links created from now on. A shorter certificate limits the damage of a lost device; renew it from the Users page before it expires.</p>
+          <div class="fgrid">
+            <label class="f">Client certificate validity <small>days (1 to 3650)</small><input name="cert_days" type="number" min="1" max="3650" required></label>
+            <label class="f">Activation link validity <small>hours (1 to 720)</small><input name="share_hours" type="number" min="1" max="720" required></label>
+            <label class="f">Downloads per link <small>1 to 50; a new link cancels the previous one</small><input name="share_downloads" type="number" min="1" max="50" required></label>
+          </div>
+        </div>
         <div><button class="btn">Save settings</button></div>
       </form>
       <form id="pwForm" class="card pad" style="margin-top:16px">
@@ -321,6 +351,17 @@
         <div class="err" id="pwErr" style="margin-top:10px"></div>
         <div style="margin-top:14px"><button class="btn ghost">Change password</button></div>
       </form>
+    </section>
+
+    <section data-page="audit" hidden>
+      <div class="head"><div><h1>Audit log</h1><p>Who did what, and from where. The same events are in the system journal.</p></div></div>
+      <div class="card">
+        <div class="tw"><table>
+          <thead><tr><th>When</th><th>Who</th><th>From</th><th>Action</th><th>Target</th><th></th><th>Details</th></tr></thead>
+          <tbody id="audit"></tbody>
+        </table></div>
+        <div class="pad" id="auditMore" hidden><button class="btn ghost sm" id="auditMoreBtn">Load older events</button></div>
+      </div>
     </section>
   </main>
 </div>
@@ -401,7 +442,8 @@ function route() {
   const page = document.querySelector(`[data-page="${CSS.escape(view)}"]`) ? view : "home";
   document.querySelectorAll("[data-page]").forEach(s => { s.hidden = s.dataset.page !== page; });
   document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.dataset.view === page));
-  if (page === "server") loadLog();
+  if (page === "server") { loadLog(); loadPki(); }
+  if (page === "audit") loadAudit(false);
 }
 addEventListener("hashchange", route);
 
@@ -414,7 +456,7 @@ async function showApp() {
   const me = await api("GET", "/api/me");
   $("who").textContent = me.username;
   $("login").hidden = true; $("app").hidden = false;
-  route(); loadSettings(); refresh();
+  route(); loadSettings(); refresh(); loadPki();
 }
 
 // ------------------------------------------------------------- data
@@ -451,6 +493,7 @@ function render() {
       <td>${u.online ? `${esc(u.real_address)}<br><small>for ${since(u.connected_since)}</small>` : "—"}</td>
       <td>${u.online ? `${bytes(u.rx)} / ${bytes(u.tx)}` : "—"}</td>
       <td>${esc(new Date(u.created_at).toLocaleDateString())}</td>
+      <td>${expiry(u.cert_expires)}</td>
       <td class="act">
         <button class="btn ghost sm" data-act="share" data-id="${u.id}" ${u.enabled ? "" : "disabled"}>${icon("qr")}QR</button>
         <button class="icon-btn" title="Download .ovpn" aria-label="Download the profile of ${esc(u.name)}" data-act="download" data-id="${u.id}" data-name="${esc(u.name)}">${icon("down")}</button>
@@ -459,7 +502,7 @@ function render() {
         <button class="icon-btn" title="Renew certificate" aria-label="Renew the certificate of ${esc(u.name)}" data-act="renew" data-id="${u.id}" data-name="${esc(u.name)}">${icon("renew")}</button>
         <button class="icon-btn bad" title="Delete" aria-label="Delete ${esc(u.name)}" data-act="delete" data-id="${u.id}" data-name="${esc(u.name)}">${icon("trash")}</button>
       </td></tr>`).join("")
-    : `<tr><td colspan="7" class="empty">${users.length ? "No users found" : "No users yet: create one from the Overview"}</td></tr>`;
+    : `<tr><td colspan="8" class="empty">${users.length ? "No users found" : "No users yet: create one from the Overview"}</td></tr>`;
 
   $("srvState").innerHTML = s.running ? `<span class="tag">Running</span>` : `<span class="tag bad">Not running</span>`;
   $("kVersion").textContent = s.version || "—";
@@ -469,6 +512,44 @@ function render() {
   $("kSubnet").textContent = s.subnet;
   $("kBytes").textContent = s.running ? `${bytes(s.bytesin)} / ${bytes(s.bytesout)}` : "—";
 }
+
+function expiry(iso) {
+  if (!iso) return "—";
+  const days = Math.floor((new Date(iso) - Date.now()) / 86400000);
+  if (days < 0) return `<span class="tag bad">Expired</span>`;
+  if (days < 30) return `<span class="tag warn">${days} d left</span>`;
+  return esc(new Date(iso).toLocaleDateString());
+}
+
+let pki = null;
+async function loadPki() {
+  try { pki = await api("GET", "/api/pki"); } catch (e) { return; }
+  const soon = pki.items.filter(i => i.days_left !== null && i.days_left < 60);
+  $("certWarn").hidden = !soon.length;
+  $("certMsg").textContent = "Expiring soon: " + soon.map(i => `${i.label} (${i.days_left < 0 ? "expired" : i.days_left + " days left"})`).join(" · ");
+  $("pkiList").innerHTML = pki.items.map(i => `<tr>
+      <td>${esc(i.label)}</td>
+      <td>${i.not_after ? esc(new Date(i.not_after).toLocaleDateString()) : "—"}</td>
+      <td>${i.days_left === null ? "—" : i.days_left < 0 ? `<span class="tag bad">expired</span>` : i.days_left < 60 ? `<span class="tag warn">${i.days_left} d</span>` : i.days_left + " d"}</td>
+    </tr>`).join("");
+  $("caFp").textContent = pki.panel_ca_fingerprint || "—";
+}
+
+let auditRows = [];
+async function loadAudit(more) {
+  try {
+    const before = more && auditRows.length ? auditRows[auditRows.length - 1].id : 0;
+    const rows = await api("GET", "/api/audit?limit=100" + (before ? `&before=${before}` : ""));
+    auditRows = more ? auditRows.concat(rows) : rows;
+    $("auditMore").hidden = rows.length < 100;
+    $("audit").innerHTML = auditRows.length ? auditRows.map(e => `<tr>
+        <td>${esc(new Date(e.ts * 1000).toLocaleString())}</td><td>${esc(e.actor)}</td><td>${esc(e.ip)}</td>
+        <td>${esc(e.action)}</td><td>${esc(e.target)}</td>
+        <td>${e.ok ? "" : `<span class="tag bad">failed</span>`}</td><td class="wrapok"><small>${esc(e.detail)}</small></td>
+      </tr>`).join("") : `<tr><td colspan="7" class="empty">No events yet</td></tr>`;
+  } catch (e) { toast(e.message, true); }
+}
+$("auditMoreBtn").onclick = () => loadAudit(true);
 
 $("uSearch").oninput = render;
 $("uFilter").onclick = (ev) => {
@@ -498,7 +579,7 @@ $("restartBtn").onclick = async () => {
 // ------------------------------------------------------------- settings
 function showSettings(v, server) {
   const f = $("net");
-  for (const k of ["endpoint_host", "public_port", "panel_url", "dns", "routes"]) f.elements[k].value = v[k];
+  for (const k of ["endpoint_host", "public_port", "panel_url", "dns", "routes", "cert_days", "share_hours", "share_downloads"]) f.elements[k].value = v[k];
   f.querySelector(`input[name=full_tunnel][value="${v.full_tunnel ? 1 : 0}"]`).checked = true;
   f.elements.client_to_client.checked = v.client_to_client;
   $("routesRow").hidden = v.full_tunnel;
@@ -525,6 +606,8 @@ $("net").onsubmit = async (ev) => {
     panel_url: f.elements.panel_url.value, dns: f.elements.dns.value, routes: f.elements.routes.value,
     full_tunnel: f.querySelector("input[name=full_tunnel]:checked").value === "1",
     client_to_client: f.elements.client_to_client.checked,
+    cert_days: Number(f.elements.cert_days.value), share_hours: Number(f.elements.share_hours.value),
+    share_downloads: Number(f.elements.share_downloads.value),
   };
   try {
     const r = await api("PUT", "/api/settings", body);
@@ -549,7 +632,7 @@ function showShare(r) {
   $("sQr").src = r.share.qr;
   $("sLink").value = r.share.url;
   $("sExp").textContent = "This link expires on " + new Date(r.share.expires_at * 1000).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) +
-    ". You can generate a new one at any time.";
+    ` or after ${r.share.downloads} downloads. A new link cancels this one.`;
   $("dlgShare").showModal();
   refresh();
 }
@@ -593,7 +676,9 @@ document.addEventListener("click", async (ev) => {
       await api("PATCH", `/api/users/${id}`, { enabled: enable });
     } else if (act === "renew") {
       if (!await confirmDlg(`Renew the certificate of ${name}?`, "The current profile stops working (e.g. lost device) and a new one is created to share.", "Renew")) return;
-      return showShare(await api("POST", `/api/users/${id}/renew`));
+      const r = await api("POST", `/api/users/${id}/renew`);
+      if (!r.share) { toast(`${name}: certificate renewed. Enable the user to share the new profile.`); return refresh(); }
+      return showShare(r);
     } else if (act === "delete") {
       if (!await confirmDlg(`Delete ${name}?`, "The certificate is revoked and the user disconnected. This cannot be undone.", "Delete")) return;
       await api("DELETE", `/api/users/${id}`);
@@ -619,6 +704,7 @@ setInterval(() => {
   refresh();
   if (location.hash === "#server") loadLog();
 }, 10000);
+setInterval(() => { if (token) loadPki(); }, 300000);
 if (token) showApp().catch(showLogin);
 </script>
 </body>

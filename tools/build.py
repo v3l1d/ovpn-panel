@@ -9,7 +9,7 @@ import pathlib
 import tarfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-TEXT = {".py", ".sh", ".html", ".txt", ".json", ".md"}
+TEXT = {".py", ".sh", ".html", ".txt", ".json", ".md", ".in", ".lock"}
 
 
 def _add(tar: tarfile.TarFile, path: pathlib.Path):

@@ -1,0 +1,3 @@
+# Test-only dependencies (the application's own are in app/requirements.lock)
+pytest
+httpx

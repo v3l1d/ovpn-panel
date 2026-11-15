@@ -1,7 +1,7 @@
 # OpenVPN Panel
 
-A small web dashboard to run an OpenVPN server, plus a one-command installer that creates a ready-to-use
-LXC container on **Proxmox VE**.
+A small web dashboard to run an OpenVPN server, plus a one-command installer that creates a hardened,
+ready-to-use LXC container on **Proxmox VE**.
 
 Create a user, show the QR code, and the user is connected a minute later from their phone.
 
@@ -10,19 +10,37 @@ Create a user, show the QR code, and the user is connected a minute later from t
 ## Features
 
 - **One-command install on Proxmox**: creates an unprivileged Debian 12 container with OpenVPN, the PKI,
-  NAT and the panel, all as systemd services.
+  the firewall and the panel, all as systemd services. The download is pinned to a release and verified.
 - **Users**
   - one click creates a client certificate;
   - a QR code opens an activation page where the user downloads the profile for OpenVPN Connect;
-  - `.ovpn` download, disable / enable, renew the certificate (lost device), delete.
+  - `.ovpn` download, disable / enable, renew the certificate (lost device), delete;
+  - certificate expiry shown per user, and configurable (2 years by default).
 - **Live view**: who is connected, from where, with which VPN IP and how much traffic; force a disconnect.
-- **Server**: status, version, uptime, traffic and logs; restart from the browser.
+- **Server**: status, version, uptime, traffic, logs and certificate expiry dates; restart from the browser.
 - **Settings**: public endpoint (DDNS name or IP), public port, full or split tunnel, DNS, client-to-client.
-- **Modern defaults**: EC certificates, `tls-crypt`, AES-256-GCM / ChaCha20-Poly1305, CRL-based revocation.
+- **Audit log** of who did what, from where.
+- **Encrypted backup and restore** of the PKI, database and configuration.
 - **Light and dark theme**, usable from a phone.
 
-The panel talks to OpenVPN through its **management interface**. It reads clients, state and statistics,
-and disconnects clients live without editing OpenVPN's files. It also generates `server.conf` from the settings.
+The panel talks to OpenVPN through its **management interface**: it reads clients, state and statistics, and
+disconnects clients live without editing OpenVPN's files.
+
+## Security at a glance
+
+- **Privilege separation.** The panel runs as an unprivileged, sandboxed user. Everything that needs root goes
+  through a small helper with a fixed list of validated operations. The CA key is never readable by the panel.
+- **Not exposed.** A firewall rule lets only your local network reach the dashboard: not the Internet, and
+  not VPN clients either. VPN clients cannot reach each other.
+- **HTTPS only**, with a private CA, a host-name allow-list, a strict Content-Security-Policy and no trust in
+  the `Host` header.
+- **Safe operations.** Renewing a certificate is atomic with rollback; bad settings are rolled back if OpenVPN
+  does not start.
+- **Sessions and logins.** Hashed tokens with expiry, a persistent login lockout, no user enumeration.
+- **Supply chain.** Versioned releases, files verified against a hash before installing, dependencies locked
+  with hashes.
+
+Details, limits and how each point is tested: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Screenshots
 
@@ -41,20 +59,23 @@ The screenshots use sample data: names and addresses are fictional.
 In the **Shell** of your Proxmox node (*Datacenter → your node → Shell*):
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/v3l1d/ovpn-panel/main/proxmox/create-ct.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/v3l1d/ovpn-panel/v1.0.0/proxmox/create-ct.sh)"
 ```
+
+The address contains a release tag, so you run exactly what was released, and the script verifies the files it
+downloads. To read it first, download it and run it afterwards (see the [installation guide](docs/INSTALL.md)).
 
 The script:
 1. asks for your DDNS name or public IP;
 2. shows what it will create and asks for confirmation;
 3. prints the panel address, user name and password at the end.
 
-Then forward **1194/udp** on your router to the container IP.
+Then forward **1194/udp** on your router to the container IP. Do not forward the panel port.
 
 The [installation guide](docs/INSTALL.md) covers the details:
 - every installer option, offline installs and installs on an existing Debian 12 system;
-- upgrades, backups and uninstalling;
-- troubleshooting.
+- upgrades, backup and restore, the command line, and uninstalling;
+- exposing the activation pages safely, and troubleshooting.
 
 ## Requirements
 
@@ -65,73 +86,76 @@ The [installation guide](docs/INSTALL.md) covers the details:
 ## How it works
 
 ```
-                 Proxmox VE node
-┌────────────────────────────────────────────────────┐
-│  LXC container (Debian 12, unprivileged)           │
-│                                                    │
-│   ovpn-panel (FastAPI, HTTPS :8443)                │
-│     ├─ management socket ─► openvpn-server@server  │◄── 1194/udp ── clients
-│     ├─ easy-rsa PKI (issue / revoke / CRL)         │
-│     └─ SQLite: admins, users, settings             │
-│   iptables NAT 10.9.0.0/24 ─► LAN / Internet       │
-└────────────────────────────────────────────────────┘
+                      Proxmox VE node
+┌────────────────────────────────────────────────────────────┐
+│  LXC container (Debian 12, unprivileged)                   │
+│                                                            │
+│   ovpn-panel   (unprivileged, sandboxed, HTTPS :8443)      │
+│        │ unix socket                                       │
+│   ovpn-panel-helper (root, 13 validated operations)        │
+│        ├─ easy-rsa PKI (issue / revoke / CRL)              │
+│        ├─ server.conf (generated from validated settings)  │
+│        └─ OpenVPN management socket ─► openvpn-server      │◄── 1194/udp ── clients
+│   firewall: NAT, client isolation, panel port = LAN only   │
+└────────────────────────────────────────────────────────────┘
 ```
 
 - **One user = one client certificate.** Profiles are rebuilt from the PKI on demand, so a new download
   link can be generated at any time.
-- **Activation links** are random, expire after 72 hours and stop working as soon as the user is disabled,
-  renewed or deleted.
+- **Activation links** are random, last 24 hours or 5 downloads by default, and stop working as soon as the user
+  is disabled, renewed or deleted.
 - **Settings take effect in two ways.** Routing and DNS changes rewrite `server.conf` and restart OpenVPN:
-  clients reconnect on their own. Endpoint and port changes only affect profiles downloaded afterwards.
-
-## Security notes
-
-- **Do not expose the panel to the Internet.** Only the OpenVPN port needs forwarding; the panel works fine
-  from your LAN. If users must open activation links from outside, put the panel behind a reverse proxy
-  with a valid certificate. See [Exposing the panel](docs/INSTALL.md#exposing-the-panel-optional).
-- **Logins:** admin passwords are hashed with scrypt, sessions expire after 12 hours, and an IP is locked
-  out for 10 minutes after 5 failed logins.
-- **Self-signed certificate:** browsers show a warning the first time.
-- **Profiles contain private keys.** Treat activation links like passwords: they are personal and short-lived.
+  clients reconnect on their own. Endpoint, port and certificate-policy changes only affect profiles
+  and certificates created afterwards.
 
 ## Development
 
-The whole installer can be tested without a Proxmox node:
-
 ```bash
-bash tests/run.sh
+bash tests/run-unit.sh      # 240 unit and security tests, in a clean Debian 12 / Python 3.11 container
+bash tests/run.sh           # full integration run on a simulated Proxmox node (Docker)
 ```
 
-`tests/run.sh` does three things:
+`tests/run.sh` does five things:
 
-1. **Simulated Proxmox node.** Builds the installer and runs it on a Debian 12 container with systemd,
-   where `pct`, `pveam`, `pvesh` and `pvesm` are simulated. `pct exec` runs commands for real, so
-   `install.sh` really installs everything.
-2. **Real OpenVPN client.** Connects one and checks:
-   - user creation, the activation page and the tunnel;
-   - NAT, disconnecting, disabling and renewing users;
-   - the split-tunnel settings and restarts.
-3. **Restart.** Restarts the node and checks that every service comes back.
-
-It needs Docker. The test panel stays available at <https://localhost:9443> afterwards.
+1. **Upgrade.** Installs the previous release, creates users, upgrades it in place, and checks that a
+   profile issued before the upgrade still connects.
+2. **System checks.** Which user runs what, which files each user can read, the sandbox seen from inside its
+   mount namespace, the helper socket, the firewall rules.
+3. **Real OpenVPN clients**, one of them in its own network namespace: connecting, NAT, the firewall (the panel
+   unreachable from the VPN, clients unable to reach each other), certificate lifetime, activation links,
+   sessions, audit log, settings and restarts.
+4. **Disaster recovery.** Backs up, destroys the PKI and the database, restores, and checks that old certificates
+   still work and revoked ones are still refused.
+5. **Lockout and restart.** A login lockout that survives a restart of the whole container.
 
 The simulation does not cover the Proxmox-specific parts: real `pct` behavior, templates, storage and
 LXC permissions.
 
+To publish a release: `python tools/release.py X.Y.Z`, commit, tag `vX.Y.Z`, push. It pins the installer to
+that tag and to the hash of the application files.
+
 ```
 app/
   install.sh            installer for Debian 12 (runs inside the container)
+  firewall.sh           NAT, client isolation and panel access rules
+  requirements.lock     dependencies with hashes (generated from requirements.in)
   ovpnpanel/
-    main.py             HTTP API and pages
-    mgmt.py             OpenVPN management interface client
-    pki.py              certificates (easy-rsa), revocation, .ovpn profiles
-    serverconf.py       server.conf generated from the settings
+    main.py             HTTP API and pages (unprivileged)
+    helper_client.py    how the panel talks to the helper
     settings.py         settings editable from the panel
-    manage.py           CLI: init, create-admin, reset-password
+    helper/             everything that runs as root
+      server.py           the helper daemon and its socket
+      ops.py              the 13 operations it offers
+      pki.py              certificates (easy-rsa)
+      serverconf.py       server.conf generation
+      tlsca.py            private CA for the panel's HTTPS certificate
+      backup.py           encrypted backup and restore
+      admin.py            root command line (ovpn-panel ...)
     static/             dashboard and activation page
 proxmox/create-ct.sh    Proxmox installer (create or --update a container)
-tools/build.py          builds dist/ovpn-panel-proxmox.sh with the app embedded (offline installs)
-tests/                  simulated Proxmox node and end-to-end tests
+tools/release.py        pins a release; tools/build.py builds the offline installer
+tests/                  unit tests, simulated Proxmox node, end-to-end tests
+docs/                   installation guide, security notes, screenshots
 ```
 
 ## License

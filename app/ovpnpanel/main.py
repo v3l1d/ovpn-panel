@@ -1,58 +1,183 @@
+import base64
+import hashlib
 import json
 import logging
 import os
+import re
+import secrets
 import sqlite3
-import subprocess
-import threading
 import time
+from contextlib import asynccontextmanager
 from typing import Optional
+from urllib.parse import urlsplit
 
 import segno
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, mgmt, pki, security, serverconf, settings
+from . import __version__, audit, db, profile, ratelimit, security, settings
+from . import helper_client as helper
 from .config import CONFIG
 
 log = logging.getLogger("ovpn-panel")
+# the application's own messages (including the audit trail) go to stderr, hence to the journal
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(name)s %(levelname)s %(message)s"))
+log.addHandler(_handler)
+log.setLevel(logging.INFO)
 
-# the name ends up in the certificate CN and in the .ovpn file name
-NAME_RE = r"^[a-z0-9][a-z0-9_.-]{1,31}$"
-_static = os.path.join(os.path.dirname(__file__), "static")
+NAME_PATTERN = r"^[a-z0-9][a-z0-9_.-]{1,31}$"  # ends up in the certificate CN and the .ovpn file name
+MAX_SESSIONS = 10
+_STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
-app = FastAPI(title="ovpn-panel", docs_url=None, redoc_url=None)
-bearer = HTTPBearer(auto_error=False)
-throttle = security.LoginThrottle()
-# serializes PKI changes, server.conf writes and restarts
-pki_lock = threading.Lock()
-
-
-@app.on_event("startup")
-def _startup():
-    db.init()
-
-
-def _pki_error(e: Exception):
-    if isinstance(e, subprocess.CalledProcessError):
-        log.error("command failed %s: %s", e.cmd, e.stderr)
-    else:
-        log.exception("PKI/OpenVPN error")
-    raise HTTPException(500, "The operation failed on the OpenVPN server (see journalctl -u ovpn-panel)")
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Cache-Control": "no-store",
+}
 
 
-def _clients() -> dict:
+# ---------------------------------------------------------------- pages and Content-Security-Policy
+
+def _load_page(name: str):
+    """The pages are single files with one inline script and style: the CSP allows exactly those
+    blocks by hash, so injected markup or script cannot run."""
+    with open(os.path.join(_STATIC, name), encoding="utf-8", newline="") as f:
+        html = f.read()
+
+    def digest(blocks):
+        return " ".join("'sha256-" + base64.b64encode(hashlib.sha256(b.encode("utf-8")).digest()).decode() + "'"
+                        for b in blocks)
+
+    scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+    styles = re.findall(r"<style>(.*?)</style>", html, re.S)
+    csp = "; ".join([
+        "default-src 'none'",
+        f"script-src {digest(scripts)}",
+        f"style-src {digest(styles)}",
+        "style-src-attr 'unsafe-inline'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "object-src 'none'",
+    ])
+    return html.encode("utf-8"), csp
+
+
+_PAGES = {name: _load_page(f"{name}.html") for name in ("index", "connect")}
+
+
+def _page(name: str) -> Response:
+    body, csp = _PAGES[name]
+    return Response(body, media_type="text/html; charset=utf-8", headers={"Content-Security-Policy": csp})
+
+
+# ---------------------------------------------------------------- host names and client addresses
+
+_hosts_cache = [0.0, frozenset()]
+
+
+def allowed_hosts() -> frozenset:
+    """Host names the panel answers to. Anything else (DNS rebinding, a forged Host header) is refused."""
+    now = time.monotonic()
+    if now - _hosts_cache[0] > 10:
+        hosts = {h.lower() for h in CONFIG.panel_hosts} | {"localhost", "127.0.0.1", "::1"}
+        if CONFIG.default_panel_host:
+            hosts.add(CONFIG.default_panel_host.lower())
+        try:
+            with db.connect() as conn:
+                url = settings.load(conn)["panel_url"]
+            if url:
+                hosts.add((urlsplit(url).hostname or "").lower())
+        except sqlite3.Error:
+            pass
+        _hosts_cache[:] = [now, frozenset(h for h in hosts if h)]
+    return _hosts_cache[1]
+
+
+def forget_hosts():
+    _hosts_cache[0] = 0.0
+
+
+def _request_host(request: Request) -> str:
+    host = request.headers.get("host", "").strip().lower()
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if ":" in host else host
+
+
+def client_ip(request: Request) -> str:
+    """The peer address; X-Forwarded-For is only believed when it comes from a trusted proxy."""
+    peer = request.client.host if request.client else "?"
+    trusted = set(CONFIG.trusted_proxies)
+    if peer in trusted:
+        for hop in reversed([h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]):
+            if hop not in trusted:
+                return hop
+    return peer
+
+
+# ---------------------------------------------------------------- application
+
+def _backfill_cert_expiry():
+    """Databases from older versions do not know when each certificate expires."""
     try:
-        return mgmt.clients()
-    except mgmt.MgmtError:
-        return {}
+        with db.connect() as conn:
+            for row in conn.execute("SELECT id, cn FROM users WHERE cert_expires IS NULL").fetchall():
+                info = helper.call("cert_info", cn=row["cn"], timeout=15)
+                if info.get("not_after"):
+                    conn.execute("UPDATE users SET cert_expires = ? WHERE id = ?", (info["not_after"], row["id"]))
+    except Exception:  # noqa: BLE001 - best effort; the helper may not be up yet
+        log.info("could not backfill certificate expiry dates yet")
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    db.init()
+    _backfill_cert_expiry()
+    yield
+
+
+app = FastAPI(title="ovpn-panel", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+bearer = HTTPBearer(auto_error=False)
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    if _request_host(request) not in allowed_hosts():
+        return PlainTextResponse("Invalid host header", status_code=400, headers=SECURITY_HEADERS)
+    response = await call_next(request)
+    for key, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    return response
+
+
+def _helper(op: str, **args):
+    """Calls the privileged helper and turns its errors into clean HTTP errors."""
+    try:
+        return helper.call(op, **args)
+    except helper.HelperError as e:
+        if e.code == "unavailable":
+            raise HTTPException(503, "The privileged helper is not running (systemctl status ovpn-panel-helper)")
+        if e.code == "not_found":
+            raise HTTPException(404, e.message)
+        if e.code == "invalid":
+            raise HTTPException(400, f"Rejected by the helper: {e.message}")
+        log.error("helper operation %s failed: %s", op, e.message)
+        raise HTTPException(500, "The operation failed on the OpenVPN server (see journalctl -u ovpn-panel-helper)")
 
 
 # ---------------------------------------------------------------- authentication
 
-def current_admin(creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer)):
+def current_admin(request: Request, creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer)):
     if creds is None:
         raise HTTPException(401, "Missing token")
     with db.connect() as conn:
@@ -67,34 +192,47 @@ def current_admin(creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer
 
 
 class LoginIn(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=200)
+    password: str = Field(max_length=1000)
 
 
 @app.post("/api/login")
 def login(body: LoginIn, request: Request):
-    ip = request.client.host if request.client else "?"
-    if throttle.blocked(ip):
-        raise HTTPException(429, "Too many attempts, try again in a few minutes")
+    ip = client_ip(request)
+    username = body.username.strip().lower()[:64]
     with db.connect() as conn:
-        row = conn.execute("SELECT * FROM admins WHERE username = ?", (body.username.strip().lower(),)).fetchone()
-        if row is None or not security.verify_password(body.password, row["pw_hash"]):
-            throttle.fail(ip)
+        if ratelimit.blocked(conn, ip, username):
+            conn.commit()
+            log.warning("login blocked for %s from %s", username, ip)
+            raise HTTPException(429, "Too many attempts, try again in a few minutes")
+        row = conn.execute("SELECT * FROM admins WHERE username = ?", (username,)).fetchone()
+        # an unknown user costs the same hashing work as a wrong password: no user enumeration by timing
+        good = security.verify_password(body.password, row["pw_hash"] if row else security.DUMMY_HASH)
+        if row is None or not good:
+            ratelimit.record_failure(conn, ip, username)
+            audit.record(conn, username, ip, "login", ok=False)
+            conn.commit()
             raise HTTPException(401, "Invalid credentials")
-        throttle.reset(ip)
+        ratelimit.clear(conn, ip, username)
+        now = time.time()
         token = security.new_token()
-        conn.execute("DELETE FROM tokens WHERE expires_at < ?", (time.time(),))
+        conn.execute("DELETE FROM tokens WHERE expires_at < ?", (now,))
+        conn.execute("INSERT INTO tokens(token_hash, admin_id, expires_at, created_at, ip) VALUES (?, ?, ?, ?, ?)",
+                     (security.token_hash(token), row["id"], now + CONFIG.session_ttl_hours * 3600, now, ip))
         conn.execute(
-            "INSERT INTO tokens(token_hash, admin_id, expires_at) VALUES (?, ?, ?)",
-            (security.token_hash(token), row["id"], time.time() + CONFIG.token_ttl_hours * 3600),
-        )
+            "DELETE FROM tokens WHERE admin_id = ? AND token_hash NOT IN "
+            "(SELECT token_hash FROM tokens WHERE admin_id = ? ORDER BY created_at DESC LIMIT ?)",
+            (row["id"], row["id"], MAX_SESSIONS))
+        audit.record(conn, username, ip, "login")
+        audit.prune(conn)
     return {"token": token, "username": row["username"]}
 
 
 @app.post("/api/logout")
-def logout(creds: HTTPAuthorizationCredentials = Depends(bearer), _=Depends(current_admin)):
+def logout(request: Request, creds: HTTPAuthorizationCredentials = Depends(bearer), admin=Depends(current_admin)):
     with db.connect() as conn:
         conn.execute("DELETE FROM tokens WHERE token_hash = ?", (security.token_hash(creds.credentials),))
+        audit.record(conn, admin["username"], client_ip(request), "logout")
     return {"ok": True}
 
 
@@ -104,20 +242,29 @@ def me(admin=Depends(current_admin)):
 
 
 class PasswordIn(BaseModel):
-    current: str
-    new: str = Field(min_length=10)
+    current: str = Field(max_length=1000)
+    new: str = Field(min_length=10, max_length=1000)
 
 
 @app.post("/api/me/password")
-def change_password(body: PasswordIn, creds: HTTPAuthorizationCredentials = Depends(bearer),
-                    admin=Depends(current_admin)):
-    if not security.verify_password(body.current, admin["pw_hash"]):
-        raise HTTPException(400, "The current password is incorrect")
+def change_password(body: PasswordIn, request: Request,
+                    creds: HTTPAuthorizationCredentials = Depends(bearer), admin=Depends(current_admin)):
+    ip = client_ip(request)
     with db.connect() as conn:
+        if not security.verify_password(body.current, admin["pw_hash"]):
+            audit.record(conn, admin["username"], ip, "password.change", ok=False)
+            conn.commit()
+            raise HTTPException(400, "The current password is incorrect")
         conn.execute("UPDATE admins SET pw_hash = ? WHERE id = ?", (security.hash_password(body.new), admin["id"]))
-        # sign out the other sessions, not the current one
+        # sign out every other session, not this one
         conn.execute("DELETE FROM tokens WHERE admin_id = ? AND token_hash != ?",
                      (admin["id"], security.token_hash(creds.credentials)))
+        audit.record(conn, admin["username"], ip, "password.change")
+    return {"ok": True}
+
+
+@app.get("/api/health")
+def health():
     return {"ok": True}
 
 
@@ -125,74 +272,53 @@ def change_password(body: PasswordIn, creds: HTTPAuthorizationCredentials = Depe
 
 @app.get("/api/overview")
 def overview(_=Depends(current_admin)):
-    server = {"running": False, "port": CONFIG.port, "proto": CONFIG.proto, "subnet": CONFIG.subnet}
+    server = {"running": False, "port": CONFIG.port, "proto": CONFIG.proto, "subnet": CONFIG.subnet, "version": ""}
     try:
-        server.update(mgmt.state())
-        server.update(mgmt.stats())
-        server["version"] = mgmt.version()
-        server["running"] = server.get("state") == "CONNECTED"
-    except mgmt.MgmtError as e:
-        server["error"] = str(e)
+        ov = helper.call("overview", timeout=15)
+        state = ov.get("state") or {}
+        server.update(state)
+        server.update(ov.get("stats") or {})
+        server["version"] = ov.get("version", "")
+        server["running"] = state.get("state") == "CONNECTED"
+        if ov.get("error"):
+            server["error"] = ov["error"]
+    except helper.HelperError as e:
+        server["error"] = e.message
     with db.connect() as conn:
         users = conn.execute("SELECT COUNT(*) AS n, SUM(enabled) AS enabled FROM users").fetchone()
         s = settings.load(conn)
     return {"server": server, "users": users["n"], "users_enabled": users["enabled"] or 0,
-            "endpoint": f"{s['endpoint_host']}:{s['public_port']}"}
+            "endpoint": f"{s['endpoint_host']}:{s['public_port']}", "panel_version": __version__}
 
 
-def _journal_log(lines: int):
-    """OpenVPN log from the journal (full history, unlike the management buffer)."""
-    try:
-        r = subprocess.run(
-            # generous margin: MANAGEMENT lines are dropped after reading
-            ["journalctl", "-u", "openvpn-server@server", "-n", str(min(lines * 20, 20000)),
-             "-o", "json", "--no-pager"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if r.returncode != 0:
-        return None
-    out = []
-    for raw in r.stdout.splitlines():
-        try:
-            e = json.loads(raw)
-        except ValueError:
-            continue
-        msg = e.get("MESSAGE")
-        if isinstance(msg, str) and not msg.startswith("MANAGEMENT:"):
-            out.append({"time": int(e["__REALTIME_TIMESTAMP"]) // 1_000_000,
-                        "flags": "N" if int(e.get("PRIORITY", 6)) <= 4 else "I", "msg": msg})
-    return out[-lines:]
+@app.get("/api/pki")
+def pki_status(_=Depends(current_admin)):
+    return _helper("pki_status", timeout=20)
 
 
 @app.get("/api/server/log")
 def server_log(lines: int = 150, _=Depends(current_admin)):
-    lines = min(max(lines, 1), 1000)
-    entries = _journal_log(lines)
-    if entries is not None:
-        return entries
-    try:
-        # without journald (e.g. installed outside systemd): management buffer
-        return [e for e in mgmt.log(lines) if not e["msg"].startswith("MANAGEMENT:")]
-    except mgmt.MgmtError as e:
-        raise HTTPException(503, str(e))
+    return _helper("journal", lines=min(max(lines, 1), 1000), timeout=30)
 
 
 @app.post("/api/server/restart")
-def server_restart(_=Depends(current_admin)):
-    with pki_lock:
-        try:
-            serverconf.restart()
-        except Exception as e:
-            _pki_error(e)
+def server_restart(request: Request, admin=Depends(current_admin)):
+    _helper("restart")
+    with db.connect() as conn:
+        audit.record(conn, admin["username"], client_ip(request), "server.restart")
     return {"ok": True}
+
+
+@app.get("/api/audit")
+def audit_log(limit: int = 100, before: int = 0, _=Depends(current_admin)):
+    with db.connect() as conn:
+        return audit.entries(conn, limit, before)
 
 
 # ---------------------------------------------------------------- VPN users
 
 def _user_out(row, clients) -> dict:
-    d = {k: row[k] for k in ("id", "name", "note", "created_at")}
+    d = {k: row[k] for k in ("id", "name", "note", "created_at", "cert_expires")}
     d["enabled"] = bool(row["enabled"])
     c = clients.get(row["cn"])
     d["online"] = c is not None
@@ -207,15 +333,36 @@ def _get_user(conn, user_id):
     return row
 
 
-def _share(conn, user, request) -> dict:
-    token, expires = security.new_token(), time.time() + CONFIG.share_ttl_hours * 3600
-    conn.execute("DELETE FROM shares WHERE expires_at < ?", (time.time(),))
-    conn.execute("INSERT INTO shares(token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-                 (security.token_hash(token), user["id"], expires))
-    base = settings.load(conn)["panel_url"] or str(request.base_url).rstrip("/")
-    url = f"{base}/p/{token}"
-    return {"url": url, "expires_at": expires,
+def _panel_base(s: dict) -> str:
+    """Base address of the activation links. Never derived from the request's Host header."""
+    if s["panel_url"]:
+        return s["panel_url"]
+    host = CONFIG.default_panel_host or (CONFIG.panel_hosts[0] if CONFIG.panel_hosts else "")
+    if not host:
+        raise HTTPException(409, "Set the public panel URL in Settings first")
+    return f"https://{host}:{int(CONFIG.panel_port)}"
+
+
+def _share(conn, user, s: dict) -> dict:
+    """A new activation link; earlier links of the same user stop working."""
+    token, expires = security.new_token(), time.time() + s["share_hours"] * 3600
+    conn.execute("DELETE FROM shares WHERE expires_at < ? OR uses_left <= 0 OR user_id = ?", (time.time(), user["id"]))
+    conn.execute("INSERT INTO shares(token_hash, user_id, expires_at, uses_left) VALUES (?, ?, ?, ?)",
+                 (security.token_hash(token), user["id"], expires, s["share_downloads"]))
+    url = f"{_panel_base(s)}/p/{token}"
+    return {"url": url, "expires_at": expires, "downloads": s["share_downloads"],
             "qr": segno.make(url, error="m").svg_data_uri(scale=5, border=2, light="#fff")}
+
+
+def _profile_text(conn, user) -> str:
+    return profile.build(_helper("profile_material", cn=user["cn"]), settings.load(conn))
+
+
+def _clients() -> dict:
+    try:
+        return helper.call("clients", timeout=15)
+    except helper.HelperError:
+        return {}
 
 
 @app.get("/api/users")
@@ -227,43 +374,49 @@ def list_users(_=Depends(current_admin)):
 
 
 class UserIn(BaseModel):
-    name: str = Field(pattern=NAME_RE)
+    name: str = Field(pattern=NAME_PATTERN)
     note: str = Field(default="", max_length=120)
 
 
 @app.post("/api/users")
-def create_user(body: UserIn, request: Request, _=Depends(current_admin)):
-    cn = pki.new_cn(body.name)
-    with pki_lock, db.connect() as conn:
+def create_user(body: UserIn, request: Request, admin=Depends(current_admin)):
+    cn = f"{body.name}_{secrets.token_hex(3)}"
+    with db.connect() as conn:
+        s = settings.load(conn)
         try:
             cur = conn.execute("INSERT INTO users(name, cn, note, created_at) VALUES (?, ?, ?, ?)",
                                (body.name, cn, body.note.strip(), db.now_iso()))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "A user with this name already exists")
-        try:
-            pki.issue(cn)
-        except Exception as e:
-            _pki_error(e)
+        # if the helper fails the exception leaves the transaction uncommitted: no user without a certificate
+        issued = _helper("issue_cert", cn=cn, days=s["cert_days"])
+        conn.execute("UPDATE users SET cert_expires = ? WHERE id = ?", (issued["not_after"], cur.lastrowid))
         user = _get_user(conn, cur.lastrowid)
-        return {"user": _user_out(user, {}), "share": _share(conn, user, request)}
+        share = _share(conn, user, s)
+        audit.record(conn, admin["username"], client_ip(request), "user.create", body.name,
+                     f"certificate valid for {s['cert_days']} days")
+        return {"user": _user_out(user, {}), "share": share}
 
 
 @app.post("/api/users/{user_id}/share")
-def share_user(user_id: int, request: Request, _=Depends(current_admin)):
+def share_user(user_id: int, request: Request, admin=Depends(current_admin)):
     with db.connect() as conn:
         user = _get_user(conn, user_id)
         if not user["enabled"]:
             raise HTTPException(409, "User is disabled: enable it before sharing the profile")
-        return {"user": _user_out(user, _clients()), "share": _share(conn, user, request)}
+        share = _share(conn, user, settings.load(conn))
+        audit.record(conn, admin["username"], client_ip(request), "share.create", user["name"])
+        return {"user": _user_out(user, _clients()), "share": share}
 
 
 @app.get("/api/users/{user_id}/profile")
-def user_profile(user_id: int, _=Depends(current_admin)):
+def user_profile(user_id: int, request: Request, admin=Depends(current_admin)):
     with db.connect() as conn:
         user = _get_user(conn, user_id)
-        content = pki.profile(user["cn"], settings.load(conn))
+        content = _profile_text(conn, user)
+        audit.record(conn, admin["username"], client_ip(request), "profile.download", user["name"])
     return PlainTextResponse(content, media_type="application/x-openvpn-profile", headers={
-        "Content-Disposition": f'attachment; filename="{user["name"]}.ovpn"', "Cache-Control": "no-store"})
+        "Content-Disposition": f'attachment; filename="{user["name"]}.ovpn"'})
 
 
 class UserPatch(BaseModel):
@@ -272,68 +425,57 @@ class UserPatch(BaseModel):
 
 
 @app.patch("/api/users/{user_id}")
-def update_user(user_id: int, body: UserPatch, _=Depends(current_admin)):
-    with pki_lock, db.connect() as conn:
+def update_user(user_id: int, body: UserPatch, request: Request, admin=Depends(current_admin)):
+    with db.connect() as conn:
         user = _get_user(conn, user_id)
         if body.note is not None:
             conn.execute("UPDATE users SET note = ? WHERE id = ?", (body.note.strip(), user_id))
         if body.enabled is not None:
             conn.execute("UPDATE users SET enabled = ? WHERE id = ?", (int(body.enabled), user_id))
-            try:
-                pki.set_disabled(user["cn"], not body.enabled)
-                if not body.enabled:
-                    conn.execute("DELETE FROM shares WHERE user_id = ?", (user_id,))
-                    mgmt.kill(user["cn"])
-            except mgmt.MgmtError:
-                pass  # OpenVPN is down: the block still applies on the next connection
-            except Exception as e:
-                _pki_error(e)
+            _helper("set_disabled", cn=user["cn"], disabled=not body.enabled)
+            if not body.enabled:
+                conn.execute("DELETE FROM shares WHERE user_id = ?", (user_id,))
+            audit.record(conn, admin["username"], client_ip(request),
+                         "user.enable" if body.enabled else "user.disable", user["name"])
     return {"ok": True}
 
 
 @app.post("/api/users/{user_id}/kick")
-def kick_user(user_id: int, _=Depends(current_admin)):
+def kick_user(user_id: int, request: Request, admin=Depends(current_admin)):
     with db.connect() as conn:
         user = _get_user(conn, user_id)
-    try:
-        mgmt.kill(user["cn"])
-    except mgmt.MgmtError as e:
-        raise HTTPException(503, str(e))
+        _helper("kill", cn=user["cn"])
+        audit.record(conn, admin["username"], client_ip(request), "user.kick", user["name"])
     return {"ok": True}
 
 
 @app.post("/api/users/{user_id}/renew")
-def renew_user(user_id: int, request: Request, _=Depends(current_admin)):
-    """Revokes the certificate and issues a new one (e.g. lost phone)."""
-    with pki_lock, db.connect() as conn:
+def renew_user(user_id: int, request: Request, admin=Depends(current_admin)):
+    """Replaces the certificate (e.g. lost phone). The helper issues the new one and revokes the old one
+    as a single step; if it fails, nothing changes."""
+    with db.connect() as conn:
         user = _get_user(conn, user_id)
-        cn = pki.new_cn(user["name"])
-        try:
-            pki.issue(cn)
-            pki.revoke(user["cn"])
-            mgmt.kill(user["cn"])
-        except mgmt.MgmtError:
-            pass
-        except Exception as e:
-            _pki_error(e)
-        conn.execute("UPDATE users SET cn = ?, enabled = 1 WHERE id = ?", (cn, user_id))
+        s = settings.load(conn)
+        new_cn = f"{user['name']}_{secrets.token_hex(3)}"
+        conn.execute("UPDATE users SET cn = ? WHERE id = ?", (new_cn, user_id))
+        renewed = _helper("renew_cert", old_cn=user["cn"], new_cn=new_cn, days=s["cert_days"],
+                          keep_disabled=not user["enabled"])
+        conn.execute("UPDATE users SET cert_expires = ? WHERE id = ?", (renewed["not_after"], user_id))
         conn.execute("DELETE FROM shares WHERE user_id = ?", (user_id,))
         user = _get_user(conn, user_id)
-        return {"user": _user_out(user, {}), "share": _share(conn, user, request)}
+        audit.record(conn, admin["username"], client_ip(request), "user.renew", user["name"])
+        # a disabled user gets a renewed certificate but no link: enable the user first
+        share = _share(conn, user, s) if user["enabled"] else None
+        return {"user": _user_out(user, {}), "share": share}
 
 
 @app.delete("/api/users/{user_id}")
-def delete_user(user_id: int, _=Depends(current_admin)):
-    with pki_lock, db.connect() as conn:
+def delete_user(user_id: int, request: Request, admin=Depends(current_admin)):
+    with db.connect() as conn:
         user = _get_user(conn, user_id)
-        try:
-            pki.revoke(user["cn"])
-            mgmt.kill(user["cn"])
-        except mgmt.MgmtError:
-            pass
-        except Exception as e:
-            _pki_error(e)
+        _helper("revoke_cert", cn=user["cn"])  # idempotent; if it fails the user stays and can be retried
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        audit.record(conn, admin["username"], client_ip(request), "user.delete", user["name"])
     return {"ok": True}
 
 
@@ -342,11 +484,14 @@ def delete_user(user_id: int, _=Depends(current_admin)):
 class SettingsIn(BaseModel):
     endpoint_host: str = Field(min_length=1, max_length=253)
     public_port: int = Field(ge=1, le=65535)
-    panel_url: str = ""
-    dns: str = ""
+    panel_url: str = Field(default="", max_length=300)
+    dns: str = Field(default="", max_length=200)
     full_tunnel: bool
-    routes: str = ""
+    routes: str = Field(default="", max_length=2000)
     client_to_client: bool
+    cert_days: int = Field(ge=1, le=3650)
+    share_hours: int = Field(ge=1, le=720)
+    share_downloads: int = Field(ge=1, le=50)
 
 
 @app.get("/api/settings")
@@ -357,61 +502,84 @@ def get_settings(_=Depends(current_admin)):
 
 
 @app.put("/api/settings")
-def put_settings(body: SettingsIn, _=Depends(current_admin)):
+def put_settings(body: SettingsIn, request: Request, admin=Depends(current_admin)):
     try:
-        values = settings.validate(body.model_dump())
+        values = settings.validate_settings(body.model_dump())
     except ValueError as e:
         raise HTTPException(422, str(e))
-    with pki_lock, db.connect() as conn:
+    with db.connect() as conn:
         old = settings.load(conn)
         settings.save(conn, values)
         new = settings.load(conn)
-        restarted = any(old[k] != new[k] for k in settings.SERVER_KEYS)
+        changed = sorted(k for k in values if old.get(k) != new.get(k))
+        restarted = settings.effective_server(old) != settings.effective_server(new)
         if restarted:
-            try:
-                serverconf.write(new)
-                serverconf.restart()
-            except Exception as e:
-                _pki_error(e)
+            # the helper rolls server.conf back if OpenVPN does not start; then the exception below
+            # also discards the database change
+            _helper("apply_server_conf", restart=True, **settings.server_params(new))
+        audit.record(conn, admin["username"], client_ip(request), "settings.update", "",
+                     ", ".join(f"{k}={new[k]}" for k in changed) or "no changes")
+    forget_hosts()
     return {"values": new, "restarted": restarted}
 
 
-# ---------------------------------------------------------------- public page for the end user
+# ---------------------------------------------------------------- public pages (no login)
 
-def _shared_user(token: str):
-    with db.connect() as conn:
-        return conn.execute(
-            """SELECT u.*, s.expires_at FROM shares s JOIN users u ON u.id = s.user_id
-               WHERE s.token_hash = ? AND s.expires_at > ? AND u.enabled = 1""",
-            (security.token_hash(token), time.time()),
-        ).fetchone()
+@app.get("/")
+def index():
+    return _page("index")
+
+
+@app.get("/panel-ca.crt")
+def panel_ca():
+    """The certificate (not the key) of the CA that signed the panel's HTTPS certificate."""
+    try:
+        with open(os.path.join(CONFIG.tls_dir, "ca.crt"), "rb") as f:
+            pem = f.read()
+    except OSError:
+        raise HTTPException(404, "No panel CA on this installation")
+    return Response(pem, media_type="application/x-x509-ca-cert",
+                    headers={"Content-Disposition": 'attachment; filename="ovpn-panel-ca.crt"'})
 
 
 @app.get("/p/{token}")
 def activation_page(token: str):
     """If the link is not valid, the page itself says so."""
-    return FileResponse(os.path.join(_static, "connect.html"),
-                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    return _page("connect")
+
+
+def _link_user(conn, token: str):
+    return conn.execute(
+        """SELECT u.id, u.name, u.cn, s.expires_at, s.uses_left, s.token_hash
+           FROM shares s JOIN users u ON u.id = s.user_id
+           WHERE s.token_hash = ? AND s.expires_at > ? AND s.uses_left > 0 AND u.enabled = 1""",
+        (security.token_hash(token), time.time()),
+    ).fetchone()
 
 
 @app.get("/dl/{token}/info")
 def shared_info(token: str):
-    user = _shared_user(token)
+    with db.connect() as conn:
+        user = _link_user(conn, token)
     if user is None:
         raise HTTPException(404, "Link expired or invalid")
     return {"name": user["name"], "filename": f"{user['name']}.ovpn", "expires_at": user["expires_at"]}
 
 
 @app.get("/dl/{token}")
-def shared_download(token: str):
-    user = _shared_user(token)
-    if user is None:
-        return PlainTextResponse("This link has expired or is not valid. Ask your administrator for a new one.",
-                                 status_code=404)
+def shared_download(token: str, request: Request):
     with db.connect() as conn:
-        content = pki.profile(user["cn"], settings.load(conn))
+        user = _link_user(conn, token)
+        if user is not None:
+            # counted before the profile is produced; if that fails the exception rolls the count back
+            used = conn.execute("UPDATE shares SET uses_left = uses_left - 1 WHERE token_hash = ? AND uses_left > 0",
+                                (user["token_hash"],))
+            if used.rowcount != 1:
+                user = None
+        if user is None:
+            return PlainTextResponse("This link has expired or is not valid. Ask your administrator for a new one.",
+                                     status_code=404)
+        content = _profile_text(conn, user)
+        audit.record(conn, "link", client_ip(request), "share.download", user["name"])
     return PlainTextResponse(content, media_type="application/x-openvpn-profile", headers={
-        "Content-Disposition": f'attachment; filename="{user["name"]}.ovpn"', "Cache-Control": "no-store"})
-
-
-app.mount("/", StaticFiles(directory=_static, html=True), name="static")
+        "Content-Disposition": f'attachment; filename="{user["name"]}.ovpn"'})

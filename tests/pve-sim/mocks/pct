@@ -8,6 +8,7 @@ case "$cmd" in
     [[ $* == *"--unprivileged 1"* && $* == *"--rootfs "* && $* == *"--net0 "* ]] || { echo "pct create: expected arguments missing" >&2; exit 2; }
     echo "arch: amd64" > "/etc/pve/lxc/$id.conf" ;;
   start|stop|set|destroy|enter) ;;
+  status) echo "status: running" ;;
   exec)
     shift  # id
     [[ $1 == -- ]] && shift

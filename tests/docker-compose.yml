@@ -18,11 +18,10 @@ services:
   e2e:
     build: ./e2e
     profiles: [test]
-    cap_add: [NET_ADMIN]
-    devices: ["/dev/net/tun:/dev/net/tun"]
+    privileged: true          # a second OpenVPN client runs in its own network namespace
     environment:
       PANEL_URL: https://pve:8443
-      CA_FILE: /cache/tls.crt
+      CA_FILE: /cache/panel-ca.crt
       ADMIN_USER: admin
     volumes:
-      - ./.cache:/cache:ro
+      - ./.cache:/cache
