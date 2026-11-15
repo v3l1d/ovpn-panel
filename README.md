@@ -52,6 +52,10 @@ Details, limits and how each point is tested: [docs/SECURITY.md](docs/SECURITY.m
 | **Dark theme** | **Activation page on the phone** |
 | ![Overview in the dark theme](docs/screenshots/overview-dark.png) | <img src="docs/screenshots/activation-mobile.png" alt="Activation page with download button, as seen on a phone" width="260"> |
 
+**Audit log**: who did what, and from where
+
+![Audit log with logins, user changes, downloads and settings updates](docs/screenshots/audit.png)
+
 The screenshots use sample data: names and addresses are fictional.
 
 ## Quick start

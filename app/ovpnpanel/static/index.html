@@ -266,7 +266,7 @@
           <div class="seg" id="uFilter"><button data-f="" class="on">All</button><button data-f="online">Online</button><button data-f="off">Disabled</button></div>
         </div>
         <div class="tw"><table>
-          <thead><tr><th>Status</th><th>User</th><th>VPN IP</th><th>From</th><th>Received / Sent</th><th>Created</th><th>Certificate expires</th><th></th></tr></thead>
+          <thead><tr><th>Status</th><th>User</th><th>VPN IP</th><th>From</th><th>Received / Sent</th><th>Certificate expires</th><th></th></tr></thead>
           <tbody id="users"></tbody>
         </table></div>
       </div>
@@ -492,7 +492,6 @@ function render() {
       <td>${esc(u.vpn_ip || "—")}</td>
       <td>${u.online ? `${esc(u.real_address)}<br><small>for ${since(u.connected_since)}</small>` : "—"}</td>
       <td>${u.online ? `${bytes(u.rx)} / ${bytes(u.tx)}` : "—"}</td>
-      <td>${esc(new Date(u.created_at).toLocaleDateString())}</td>
       <td>${expiry(u.cert_expires)}</td>
       <td class="act">
         <button class="btn ghost sm" data-act="share" data-id="${u.id}" ${u.enabled ? "" : "disabled"}>${icon("qr")}QR</button>
@@ -502,7 +501,7 @@ function render() {
         <button class="icon-btn" title="Renew certificate" aria-label="Renew the certificate of ${esc(u.name)}" data-act="renew" data-id="${u.id}" data-name="${esc(u.name)}">${icon("renew")}</button>
         <button class="icon-btn bad" title="Delete" aria-label="Delete ${esc(u.name)}" data-act="delete" data-id="${u.id}" data-name="${esc(u.name)}">${icon("trash")}</button>
       </td></tr>`).join("")
-    : `<tr><td colspan="8" class="empty">${users.length ? "No users found" : "No users yet: create one from the Overview"}</td></tr>`;
+    : `<tr><td colspan="7" class="empty">${users.length ? "No users found" : "No users yet: create one from the Overview"}</td></tr>`;
 
   $("srvState").innerHTML = s.running ? `<span class="tag">Running</span>` : `<span class="tag bad">Not running</span>`;
   $("kVersion").textContent = s.version || "—";
