@@ -119,3 +119,9 @@ proxmox/create-ct.sh    Proxmox installer (create or --update a container)
 tools/build.py          builds dist/ovpn-panel-proxmox.sh with the app embedded (offline installs)
 tests/                  simulated Proxmox node and end-to-end tests
 ```
+
+## License
+
+ovpn-panel is free software, released under the [GNU General Public License v3.0](LICENSE).
+You can use, study, share and modify it. If you distribute a modified version, you must release its
+source code under the same license.
