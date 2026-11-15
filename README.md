@@ -5,6 +5,8 @@ LXC container on **Proxmox VE**.
 
 Create a user, show the QR code, and the user is connected a minute later from their phone.
 
+![Overview: connected clients, traffic and the new-user form](docs/screenshots/overview-light.png)
+
 ## Features
 
 - **One-command install on Proxmox**: creates an unprivileged Debian 12 container with OpenVPN, the PKI,
@@ -21,6 +23,18 @@ Create a user, show the QR code, and the user is connected a minute later from t
 
 The panel talks to OpenVPN through its **management interface**. It reads clients, state and statistics,
 and disconnects clients live without editing OpenVPN's files. It also generates `server.conf` from the settings.
+
+## Screenshots
+
+| Users | Sharing a profile |
+|---|---|
+| ![Users list with status, VPN IP, traffic and actions](docs/screenshots/users.png) | ![QR code and activation link for a user](docs/screenshots/share-qr.png) |
+| **Server status and log** | **Settings** |
+| ![Server status, uptime, traffic and OpenVPN log](docs/screenshots/server.png) | ![Public address, routing and DNS settings](docs/screenshots/settings.png) |
+| **Dark theme** | **Activation page on the phone** |
+| ![Overview in the dark theme](docs/screenshots/overview-dark.png) | <img src="docs/screenshots/activation-mobile.png" alt="Activation page with download button, as seen on a phone" width="260"> |
+
+The screenshots use sample data: names and addresses are fictional.
 
 ## Quick start
 
