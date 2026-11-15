@@ -7,8 +7,8 @@ set -euo pipefail
 # A release pins a tag and the hash of the application files (tools/release.py fills the two lines
 # below): the download is refused if the files do not match. A development checkout leaves them empty.
 REPO_URL="${OVPN_PANEL_REPO_URL:-https://github.com/v3l1d/ovpn-panel}"
-PINNED_REF="main"
-PINNED_TREE_SHA256=""
+PINNED_REF="v1.0.0"
+PINNED_TREE_SHA256="c9753ab75de46b75e21493cf88842bd304e3d08b04def259fea60b562a4b7fd3"
 REPO_REF="${OVPN_PANEL_REF:-$PINNED_REF}"
 
 CTID="${CTID:-}"
