@@ -34,7 +34,7 @@ The default container uses 1 core, 512 MB RAM and 4 GB of disk, which is plenty 
 Open the **Shell** of your node (*Datacenter → your node → Shell*) and run:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/OWNER/ovpn-panel/main/proxmox/create-ct.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/v3l1d/ovpn-panel/main/proxmox/create-ct.sh)"
 ```
 
 The script will:
@@ -163,7 +163,7 @@ The container installer is a plain script. It works on any Debian 12 system with
 or an LXC container you created yourself.
 
 ```bash
-git clone https://github.com/OWNER/ovpn-panel.git
+git clone https://github.com/v3l1d/ovpn-panel.git
 cd ovpn-panel
 sudo PUBLIC_HOST=vpn.example.net bash app/install.sh
 ```
@@ -191,7 +191,7 @@ lxc.mount.entry: /dev/net dev/net none bind,create=dir
 From the Proxmox node shell:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/OWNER/ovpn-panel/main/proxmox/create-ct.sh)" -- --update <ID>
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/v3l1d/ovpn-panel/main/proxmox/create-ct.sh)" -- --update <ID>
 ```
 
 On a manual install, pull the repository and run `sudo bash app/install.sh` again.

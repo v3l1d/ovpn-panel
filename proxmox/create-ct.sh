@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # Where the application is downloaded from when this script runs on its own (e.g. through curl).
-REPO_URL="${OVPN_PANEL_REPO_URL:-https://github.com/OWNER/ovpn-panel}"
+REPO_URL="${OVPN_PANEL_REPO_URL:-https://github.com/v3l1d/ovpn-panel}"
 REPO_REF="${OVPN_PANEL_REF:-main}"
 
 CTID="${CTID:-}"

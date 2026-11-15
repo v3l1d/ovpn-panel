@@ -27,7 +27,7 @@ and disconnects clients live without editing OpenVPN's files. It also generates 
 In the **Shell** of your Proxmox node (*Datacenter → your node → Shell*):
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/OWNER/ovpn-panel/main/proxmox/create-ct.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/v3l1d/ovpn-panel/main/proxmox/create-ct.sh)"
 ```
 
 The script:
