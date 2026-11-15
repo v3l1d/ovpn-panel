@@ -23,7 +23,7 @@ check() { local what="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$what"; else
 checkno() { local what="$1"; shift; if "$@" >/dev/null 2>&1; then bad "$what"; else ok "$what"; fi; }
 equals() { local what="$1" want="$2" got="$3"; if [[ $got == "$want" ]]; then ok "$what"; else bad "$what (wanted '$want', got '$got')"; fi; }
 pve() { $C exec -T pve "$@"; }
-e2e() { local phase="$1"; shift; $C run --rm -T -e PHASE="$phase" -e ADMIN_PASSWORD="$PW" "$@" e2e || fails=$((fails + 1)); }
+e2e() { local phase="$1"; shift; $C run --rm --build -T -e PHASE="$phase" -e ADMIN_PASSWORD="$PW" "$@" e2e || fails=$((fails + 1)); }
 wait_node() {
   for _ in $(seq 90); do
     $C exec -T pve systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded' && return

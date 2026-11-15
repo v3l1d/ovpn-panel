@@ -55,10 +55,10 @@ def cmd_configure(a):
     try:
         wanted = {
             "public_host": validate.host(a.public_host) if a.public_host else None,
-            "port": validate.int_range(a.port, "port", 1, 65535) if a.port else None,
+            "port": validate.int_range(int(a.port), "port", 1, 65535) if a.port else None,
             "proto": a.proto if a.proto in ("udp", "tcp") else None,
             "subnet": str(ipaddress.IPv4Network(a.subnet)) if a.subnet else None,
-            "panel_port": validate.int_range(a.panel_port, "panel port", 1, 65535) if a.panel_port else None,
+            "panel_port": validate.int_range(int(a.panel_port), "panel port", 1, 65535) if a.panel_port else None,
             "default_panel_host": validate.host(a.panel_host) if a.panel_host else None,
         }
         hosts = list(cfg.get("panel_hosts", []))
