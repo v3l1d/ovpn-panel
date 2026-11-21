@@ -50,6 +50,11 @@ def render(s: dict) -> str:
         for r in s["routes"]:
             n = ipaddress.IPv4Network(r)
             lines.append(f'push "route {n.network_address} {n.netmask}"')
+        # In split tunnel the DNS servers are outside the routed networks: without a host route
+        # the client sends its queries out of the normal connection and names stop resolving,
+        # even though the networks themselves are reachable.
+        for d in s["dns"]:
+            lines.append(f'push "route {ipaddress.IPv4Address(d)} 255.255.255.255"')
     lines += [f'push "dhcp-option DNS {ipaddress.IPv4Address(d)}"' for d in s["dns"]]
     if s["client_to_client"]:
         lines.append("client-to-client")
